@@ -1,7 +1,7 @@
 import { drawQr } from '../qr';
-import { finalAmount, payment, pickup, product, site, store, won, pt } from '../data';
+import { finalAmount, payment, pickup, points, pointPolicy, product, recommendations, site, store, won, pt } from '../data';
 
-/** 3D 장면 안 캔버스 텍스처를 그리는 함수들 (휴대폰 화면, QR 포스터, 간판) */
+/** 3D 장면 안 캔버스 텍스처를 그리는 함수들 (노트북 속 사이트 화면, 휴대폰 결제 앱 화면, 간판) */
 
 const FONT = '"Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif';
 const C = {
@@ -29,7 +29,8 @@ export const ALL_TEXT =
     '마감 한정 판매 상품 선택 선결제하기 결제하기 주문 마감 픽업 마감 보유 포인트 모두 사용 최종 결제액 결제 수단',
     '토스페이 네이버페이 카카오페이 결제 완료 픽업 번호 수령 매장 수령 시간 까지 수령 카운터에서 픽업 번호를 말씀해 주세요',
     '휴대폰 카메라로 스캔하세요 앱 설치 없이 바로 결제 QR 코드를 화면 안에 맞춰 주세요 열기 웹 주문 페이지',
-    '한정 개 원 도시락 간편식 오늘 마감 화면 예시 잔액 적립',
+    '한정 개 원 도시락 간편식 오늘 마감 화면 예시 잔액 적립 예정 내일부터 사용 가능 결제 QR 만들기 앱으로 스캔 금액',
+    '참치마요 삼각김밥 햄치즈 샌드위치 상한 남을 예상 다음 날부터 포인트는 당일 사용 불가 결제가 끝나면',
   ].join(' ');
 
 export async function loadFonts() {
@@ -81,7 +82,7 @@ function cover(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, 
 export const PHONE_W = 540;
 export const PHONE_H = 1100;
 
-export type ScreenKind = 'scan' | 'scanFound' | 'product' | 'pay' | 'done';
+export type ScreenKind = 'scan' | 'done';
 
 function mockBadge(ctx: CanvasRenderingContext2D, x: number, y: number, dark = false) {
   ctx.save();
@@ -123,44 +124,34 @@ function browserBar(ctx: CanvasRenderingContext2D) {
   text(ctx, site.name, 88, 119, 23, C.ink, 700);
 }
 
-function button(ctx: CanvasRenderingContext2D, label: string) {
-  rr(ctx, 30, PHONE_H - 132, PHONE_W - 60, 88, 22);
-  ctx.fillStyle = C.green;
-  ctx.fill();
-  text(ctx, label, PHONE_W / 2, PHONE_H - 75, 30, '#ffffff', 800, 'center');
-}
-
 function row(ctx: CanvasRenderingContext2D, y: number, label: string, value: string, valueColor = C.ink, size = 30) {
   text(ctx, label, 56, y, 25, C.ink2, 600);
   text(ctx, value, PHONE_W - 56, y, size, valueColor, 800, 'right');
 }
 
 function qrViewfinder(ctx: CanvasRenderingContext2D) {
-  // 카메라 화면: 어두운 배경 위 포스터 일부
+  // 결제 앱 카메라 화면: 어두운 배경 위 노트북 화면 일부
   const g = ctx.createLinearGradient(0, 0, 0, PHONE_H);
   g.addColorStop(0, '#26332c');
   g.addColorStop(1, '#121a16');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, PHONE_W, PHONE_H);
-  // 포스터 종이
+  // 노트북 화면에 뜬 결제 QR
   ctx.save();
   ctx.translate(PHONE_W / 2, 470);
   ctx.rotate(-0.04);
-  rr(ctx, -200, -250, 400, 520, 18);
-  ctx.fillStyle = '#f3ecdb';
+  rr(ctx, -210, -230, 420, 470, 18);
+  ctx.fillStyle = '#f3f4f2';
   ctx.fill();
-  ctx.fillStyle = C.green;
-  ctx.fillRect(-200, -250, 400, 70);
-  text(ctx, '마감 한정 판매', 0, -203, 30, '#ffffff', 800, 'center');
-  drawQr(ctx, -150, -150, 300);
-  text(ctx, '휴대폰 카메라로 스캔하세요', 0, 205, 23, C.ink2, 700, 'center');
+  drawQr(ctx, -150, -170, 300);
+  text(ctx, `결제 금액 ${won(finalAmount)}`, 0, 190, 26, C.ink, 800, 'center');
   ctx.restore();
   // 스캔 가이드 모서리
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 8;
   ctx.lineCap = 'round';
   const x0 = PHONE_W / 2 - 175;
-  const y0 = 470 - 175 - 30;
+  const y0 = 470 - 175 - 45;
   const s = 350;
   const L = 54;
   const corners: [number, number, number, number][] = [
@@ -178,97 +169,34 @@ function qrViewfinder(ctx: CanvasRenderingContext2D) {
   });
 }
 
-export function drawScreen(kind: ScreenKind, photo: HTMLImageElement): HTMLCanvasElement {
+export function drawScreen(kind: ScreenKind): HTMLCanvasElement {
   const cv = document.createElement('canvas');
   cv.width = PHONE_W;
   cv.height = PHONE_H;
   const ctx = cv.getContext('2d')!;
 
-  if (kind === 'scan' || kind === 'scanFound') {
+  if (kind === 'scan') {
+    // 간편결제 앱의 QR 스캔 화면 (노트북에 뜬 결제 QR을 찍는 중)
     qrViewfinder(ctx);
-    statusBar(ctx, '22:12', true);
+    statusBar(ctx, '22:16', true);
     mockBadge(ctx, PHONE_W - 26, 84, true);
-    if (kind === 'scan') {
-      text(ctx, 'QR 코드를 화면 안에 맞춰 주세요', PHONE_W / 2, 860, 26, '#ffffff', 700, 'center');
-    } else {
-      // 스캔 결과 시트
-      rr(ctx, 22, 780, PHONE_W - 44, 290, 30);
-      ctx.fillStyle = C.paper;
-      ctx.fill();
-      ctx.fillStyle = C.green;
-      rr(ctx, 50, 812, 64, 64, 16);
-      ctx.fill();
-      ctx.fillStyle = C.orange;
-      rr(ctx, 64, 830, 18, 28, 4);
-      ctx.fill();
-      text(ctx, site.name, 132, 840, 28, C.ink, 800);
-      text(ctx, `${store.name} 마감 상품 · 앱 설치 없이`, 132, 874, 21, C.ink3, 600);
-      rr(ctx, 50, 930, PHONE_W - 100, 96, 22);
-      ctx.fillStyle = C.green;
-      ctx.fill();
-      text(ctx, '웹 주문 페이지 열기', PHONE_W / 2, 990, 30, '#ffffff', 800, 'center');
-    }
+    text(ctx, `${payment.selectedMethod} · QR 결제`, PHONE_W / 2, 150, 30, '#ffffff', 800, 'center');
+    rr(ctx, 22, 820, PHONE_W - 44, 250, 30);
+    ctx.fillStyle = C.paper;
+    ctx.fill();
+    text(ctx, `${site.name} · ${store.name}`, PHONE_W / 2, 880, 24, C.ink3, 600, 'center');
+    text(ctx, won(finalAmount), PHONE_W / 2, 960, 64, C.orangeDeep, 900, 'center');
+    text(ctx, `${product.name} · 포인트 ${pt(payment.pointsUsed)} 사용`, PHONE_W / 2, 1010, 22, C.ink2, 600, 'center');
     return cv;
   }
 
   ctx.fillStyle = C.paper;
   ctx.fillRect(0, 0, PHONE_W, PHONE_H);
-  statusBar(ctx, kind === 'product' ? '22:14' : kind === 'pay' ? '22:16' : '22:17');
+  statusBar(ctx, '22:17');
   browserBar(ctx);
   mockBadge(ctx, PHONE_W - 26, 156);
 
-  if (kind === 'product') {
-    text(ctx, `${store.name} 마감 상품`, 40, 186, 30, C.ink, 800);
-    ctx.save();
-    rr(ctx, 30, 214, PHONE_W - 60, 300, 26);
-    ctx.clip();
-    cover(ctx, photo, 30, 214, PHONE_W - 60, 300);
-    ctx.restore();
-    text(ctx, product.name, 40, 580, 40, C.ink, 800);
-    rr(ctx, PHONE_W - 190, 544, 150, 50, 25);
-    ctx.fillStyle = C.orange;
-    ctx.fill();
-    text(ctx, `한정 ${product.limitedQty}개`, PHONE_W - 115, 579, 26, '#ffffff', 800, 'center');
-    text(ctx, won(product.price), 40, 640, 44, C.green, 800);
-    rr(ctx, 30, 676, PHONE_W - 60, 170, 22);
-    ctx.fillStyle = C.ivory;
-    ctx.fill();
-    row(ctx, 742, '주문 마감', product.orderDeadline);
-    ctx.fillStyle = C.line;
-    ctx.fillRect(56, 762, PHONE_W - 112, 2);
-    row(ctx, 816, '픽업 마감', product.pickupDeadline);
-    button(ctx, '1개 선결제하기');
-  } else if (kind === 'pay') {
-    text(ctx, '선결제', 40, 192, 34, C.ink, 800);
-    row(ctx, 262, `${product.name} × 1`, won(product.price), C.ink, 28);
-    ctx.fillStyle = C.line;
-    ctx.fillRect(40, 288, PHONE_W - 80, 2);
-    rr(ctx, 30, 312, PHONE_W - 60, 140, 22);
-    ctx.fillStyle = C.greenSoft;
-    ctx.fill();
-    row(ctx, 370, '보유 포인트', pt(payment.pointsOwned), C.ink, 28);
-    row(ctx, 424, `${pt(payment.pointsUsed)} 모두 사용`, `−${won(payment.pointsUsed)}`, C.green, 28);
-    text(ctx, '최종 결제액', 40, 512, 26, C.ink2, 700);
-    text(ctx, won(finalAmount), 36, 592, 82, C.orangeDeep, 900);
-    text(ctx, '결제 수단', 40, 656, 23, C.ink3, 700);
-    payment.methods.forEach((m, i) => {
-      const y = 680 + i * 84;
-      const sel = m === payment.selectedMethod;
-      rr(ctx, 30, y, PHONE_W - 60, 70, 18);
-      ctx.fillStyle = sel ? C.greenSoft : C.paper;
-      ctx.fill();
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = sel ? C.green : C.line;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(68, y + 35, 12, 0, Math.PI * 2);
-      ctx.lineWidth = sel ? 9 : 3;
-      ctx.strokeStyle = sel ? C.green : C.ink3;
-      ctx.stroke();
-      text(ctx, m, 98, y + 45, 27, C.ink, 700);
-    });
-    button(ctx, `${won(finalAmount)} 결제하기`);
-  } else {
+  {
     ctx.fillStyle = C.green;
     ctx.beginPath();
     ctx.arc(PHONE_W / 2, 260, 52, 0, Math.PI * 2);
@@ -304,35 +232,6 @@ export function drawScreen(kind: ScreenKind, photo: HTMLImageElement): HTMLCanva
   return cv;
 }
 
-/** 매장 앞 QR 포스터 */
-export function drawPoster(): HTMLCanvasElement {
-  const W = 600;
-  const H = 860;
-  const cv = document.createElement('canvas');
-  cv.width = W;
-  cv.height = H;
-  const ctx = cv.getContext('2d')!;
-  ctx.fillStyle = C.paper;
-  ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = C.green;
-  ctx.fillRect(0, 0, W, 132);
-  text(ctx, '마감 한정 판매', W / 2, 62, 46, '#ffffff', 800, 'center');
-  text(ctx, `주문 마감 ${product.orderDeadline} · 픽업 마감 ${product.pickupDeadline}`, W / 2, 108, 24, '#cfe2d6', 600, 'center');
-  text(ctx, product.name, 48, 196, 38, C.ink, 800);
-  rr(ctx, W - 210, 158, 162, 54, 27);
-  ctx.fillStyle = C.orange;
-  ctx.fill();
-  text(ctx, `한정 ${product.limitedQty}개`, W - 129, 196, 28, '#ffffff', 800, 'center');
-  drawQr(ctx, 130, 236, 340);
-  text(ctx, '휴대폰 카메라로 스캔하세요', W / 2, 630, 32, C.ink, 800, 'center');
-  text(ctx, '앱 설치 없이 바로 결제', W / 2, 676, 27, C.green, 700, 'center');
-  ctx.fillStyle = C.line;
-  ctx.fillRect(48, 712, W - 96, 2);
-  text(ctx, `${store.name} · ${site.name}`, W / 2, 764, 24, C.ink3, 600, 'center');
-  text(ctx, '화면 예시', W / 2, 816, 22, C.orangeDeep, 800, 'center');
-  return cv;
-}
-
 /** 매장 간판 */
 export function drawSign(label: string, w = 1024, h = 200): HTMLCanvasElement {
   const cv = document.createElement('canvas');
@@ -362,3 +261,172 @@ export function drawTile(): HTMLCanvasElement {
   return cv;
 }
 
+
+export const LAPTOP_W = 1280;
+export const LAPTOP_H = 800;
+export type LaptopKind = 'list' | 'checkout' | 'qr' | 'done';
+
+function laptopChrome(ctx: CanvasRenderingContext2D) {
+  ctx.fillStyle = C.paper;
+  ctx.fillRect(0, 0, LAPTOP_W, LAPTOP_H);
+  ctx.fillStyle = '#ece6d8';
+  ctx.fillRect(0, 0, LAPTOP_W, 70);
+  ['#e36b3a', '#f2c14e', '#7aa05a'].forEach((c, i) => {
+    ctx.fillStyle = c;
+    ctx.beginPath();
+    ctx.arc(34 + i * 30, 35, 9, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  rr(ctx, 150, 14, 760, 42, 21);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+  text(ctx, `${site.name} · ${store.name}`, 176, 44, 24, C.ink2, 600);
+  mockBadge(ctx, LAPTOP_W - 30, 15);
+  // 사이트 머리
+  ctx.fillStyle = C.green;
+  ctx.fillRect(0, 70, LAPTOP_W, 80);
+  ctx.fillStyle = C.orange;
+  rr(ctx, 40, 92, 36, 36, 8);
+  ctx.fill();
+  text(ctx, 'Wasteoff', 92, 122, 34, '#ffffff', 800);
+  text(ctx, `${store.name} 오늘 마감 상품`, LAPTOP_W - 40, 122, 26, '#cfe2d6', 600, 'right');
+}
+
+function pointChip(ctx: CanvasRenderingContext2D, x: number, y: number, label: string) {
+  ctx.font = `800 22px ${FONT}`;
+  const w = ctx.measureText(label).width + 28;
+  rr(ctx, x, y, w, 38, 19);
+  ctx.fillStyle = C.greenSoft;
+  ctx.fill();
+  text(ctx, label, x + 14, y + 27, 22, C.green, 800);
+}
+
+export function drawLaptop(kind: LaptopKind, photo: HTMLImageElement): HTMLCanvasElement {
+  const cv = document.createElement('canvas');
+  cv.width = LAPTOP_W;
+  cv.height = LAPTOP_H;
+  const ctx = cv.getContext('2d')!;
+  laptopChrome(ctx);
+  const main = recommendations[0];
+
+  if (kind === 'list') {
+    text(ctx, '수요예측으로 오늘 남을 상품만 한정 판매합니다', 40, 205, 30, C.ink, 800);
+    const cardW = 380;
+    recommendations.forEach((r, i) => {
+      const x = 40 + i * (cardW + 20);
+      const y = 236;
+      rr(ctx, x, y, cardW, 470, 24);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.lineWidth = r.main ? 6 : 2;
+      ctx.strokeStyle = r.main ? C.orange : C.line;
+      ctx.stroke();
+      ctx.save();
+      rr(ctx, x + 16, y + 16, cardW - 32, 200, 16);
+      ctx.clip();
+      if (r.main) cover(ctx, photo, x + 16, y + 16, cardW - 32, 200);
+      else {
+        ctx.fillStyle = i === 1 ? '#efe7d6' : '#f4ead9';
+        ctx.fillRect(x + 16, y + 16, cardW - 32, 200);
+        ctx.fillStyle = i === 1 ? '#2a2a2a' : '#e9c88a';
+        ctx.beginPath();
+        ctx.moveTo(x + cardW / 2, y + 50);
+        ctx.lineTo(x + cardW / 2 + 90, y + 190);
+        ctx.lineTo(x + cardW / 2 - 90, y + 190);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = i === 1 ? '#ffffff' : '#f6e7b8';
+        ctx.fillRect(x + cardW / 2 - 50, y + 150, 100, 30);
+      }
+      ctx.restore();
+      text(ctx, r.name, x + 22, y + 262, 32, C.ink, 800);
+      text(ctx, won(r.price), x + 22, y + 310, 34, C.green, 800);
+      rr(ctx, x + cardW - 150, y + 280, 128, 42, 21);
+      ctx.fillStyle = C.orange;
+      ctx.fill();
+      text(ctx, `한정 ${r.expectedLeft}개`, x + cardW - 86, y + 309, 22, '#ffffff', 800, 'center');
+      pointChip(ctx, x + 22, y + 340, `수령 후 +${pt(r.reward.points)}`);
+      text(ctx, `${r.saleEnd} 판매 마감`, x + 22, y + 420, 22, C.ink3, 600);
+      if (r.main) text(ctx, `주문 ${product.orderDeadline} · 픽업 ${product.pickupDeadline}`, x + 22, y + 452, 22, C.ink2, 700);
+    });
+    text(ctx, `포인트는 상품별 재고와 수요예측에 따라 달라지고 1개당 최대 ${pt(pointPolicy.maxPoints)}입니다.`, 40, 760, 22, C.ink3, 600);
+  } else if (kind === 'checkout') {
+    ctx.save();
+    rr(ctx, 40, 190, 520, 300, 24);
+    ctx.clip();
+    cover(ctx, photo, 40, 190, 520, 300);
+    ctx.restore();
+    text(ctx, `${main.name} × 1`, 40, 550, 36, C.ink, 800);
+    text(ctx, won(main.price), 40, 600, 34, C.green, 800);
+    pointChip(ctx, 40, 630, `수령 후 +${pt(points.earned)} 적립 예정`);
+    text(ctx, '오늘 적립된 포인트는 내일부터 쓸 수 있어요', 40, 712, 22, C.ink3, 600);
+    const x = 620;
+    rr(ctx, x, 190, 620, 150, 22);
+    ctx.fillStyle = C.greenSoft;
+    ctx.fill();
+    text(ctx, '사용 가능 포인트', x + 28, 245, 26, C.ink2, 600);
+    text(ctx, pt(payment.pointsOwned), x + 592, 245, 28, C.ink, 800, 'right');
+    text(ctx, `${pt(payment.pointsUsed)} 모두 사용`, x + 28, 305, 28, C.ink, 800);
+    text(ctx, `−${won(payment.pointsUsed)}`, x + 592, 305, 28, C.green, 800, 'right');
+    text(ctx, '최종 결제액', x, 400, 26, C.ink2, 700);
+    text(ctx, won(finalAmount), x, 480, 80, C.orangeDeep, 900);
+    text(ctx, 'QR 결제 앱', x, 540, 22, C.ink3, 700);
+    payment.methods.forEach((m, i) => {
+      const bx = x + i * 210;
+      const sel = m === payment.selectedMethod;
+      rr(ctx, bx, 556, 196, 60, 16);
+      ctx.fillStyle = sel ? C.greenSoft : '#ffffff';
+      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = sel ? C.green : C.line;
+      ctx.stroke();
+      text(ctx, m, bx + 98, 595, 24, C.ink, 700, 'center');
+    });
+    rr(ctx, x, 650, 620, 80, 20);
+    ctx.fillStyle = C.green;
+    ctx.fill();
+    text(ctx, '결제 QR 만들기', x + 310, 702, 30, '#ffffff', 800, 'center');
+  } else if (kind === 'qr') {
+    rr(ctx, 120, 180, 480, 560, 28);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = C.green;
+    ctx.stroke();
+    drawQr(ctx, 160, 220, 400);
+    text(ctx, '결제 QR', 360, 690, 30, C.green, 800, 'center');
+    const x = 680;
+    text(ctx, 'QR 결제', x, 240, 30, C.ink2, 700);
+    text(ctx, won(finalAmount), x, 340, 96, C.orangeDeep, 900);
+    text(ctx, `${main.name} ${won(main.price)} − 포인트 ${pt(payment.pointsUsed)}`, x, 395, 24, C.ink2, 600);
+    rr(ctx, x, 440, 520, 120, 22);
+    ctx.fillStyle = C.greenSoft;
+    ctx.fill();
+    text(ctx, `${payment.selectedMethod} 앱으로`, x + 28, 490, 30, C.ink, 800);
+    text(ctx, 'QR을 스캔하세요', x + 28, 535, 30, C.ink, 800);
+    text(ctx, '결제가 끝나면 픽업 번호가 바로 나옵니다', x, 620, 24, C.ink3, 600);
+  } else {
+    ctx.fillStyle = C.green;
+    ctx.beginPath();
+    ctx.arc(LAPTOP_W / 2, 240, 52, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 9;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(LAPTOP_W / 2 - 24, 242);
+    ctx.lineTo(LAPTOP_W / 2 - 6, 260);
+    ctx.lineTo(LAPTOP_W / 2 + 26, 224);
+    ctx.stroke();
+    text(ctx, 'QR 결제 완료', LAPTOP_W / 2, 345, 40, C.green, 800, 'center');
+    rr(ctx, LAPTOP_W / 2 - 300, 380, 600, 230, 28);
+    ctx.fillStyle = C.orangeSoft;
+    ctx.fill();
+    text(ctx, '픽업 번호', LAPTOP_W / 2, 432, 28, C.orangeDeep, 700, 'center');
+    text(ctx, pickup.number, LAPTOP_W / 2, 545, 120, C.ink, 900, 'center');
+    text(ctx, `${main.name} 1개 · ${won(finalAmount)}`, LAPTOP_W / 2, 590, 26, C.ink2, 600, 'center');
+    text(ctx, `${store.name} · ${product.pickupDeadline}까지 수령`, LAPTOP_W / 2, 668, 30, C.ink, 800, 'center');
+    text(ctx, `수령 후 +${pt(points.earned)} 적립 · 내일부터 사용 가능`, LAPTOP_W / 2, 720, 26, C.green, 700, 'center');
+  }
+  return cv;
+}

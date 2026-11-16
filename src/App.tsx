@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
 import dosirak from './assets/dosirak-1440.jpg';
-import { PaymentScreen, PickupScreen, ProductScreen } from './components/CustomerScreens';
-import { ApprovalList, Equation, ForecastBasis, OwnerMiniPanel, StockBar } from './components/Inventory';
+import { PaymentScreen, PickupScreen, ProductScreen, QrPayScreen } from './components/CustomerScreens';
+import { ApprovalList, Equation, ForecastBasis, OwnerMiniPanel, PointPolicy, StockBar } from './components/Inventory';
 import { Process3D } from './components/Process3D';
-import { QrStrip } from './components/QrStrip';
 import { Icon, MockBadge, Phone } from './components/ui';
-import { finalAmount, flowSteps, inventory, limitedQty, pickup, points, product, pt, store, won } from './data';
+import { finalAmount, flowSteps, inventory, limitedQty, payment, pickup, pointPolicy, points, product, pt, store, won } from './data';
 
 const sections = [
   { id: 'process', label: '3D 과정' },
@@ -91,8 +90,8 @@ function Hero() {
             한정 판매
           </h1>
           <p className="hero__lead">
-            오늘 남을 도시락을 미리 판매합니다. 수요예측이 남을 상품과 수량을 찾고 점주는 승인만 합니다. 고객은 매장
-            QR로 접속해 자체 사이트에서 선결제하고, 주문번호로 픽업한 뒤 포인트를 받습니다.
+            오늘 남을 도시락을 미리 판매합니다. 수요예측이 남을 상품과 수량을 찾고 점주는 승인만 합니다. 고객은 Wasteoff
+            사이트에서 마감 상품을 보고, 포인트를 쓴 뒤 QR로 결제하고, 주문번호로 픽업해 포인트를 받습니다.
           </p>
           <div className="hero__actions">
             <a href="#process" className="btn btn--primary">
@@ -134,8 +133,8 @@ function ProcessSection() {
           <p className="step-tag">한눈에 보기 · 3D</p>
           <h2 id="process-title">3D로 보는 실제 과정</h2>
           <p>
-            {store.name}의 마감 1시간을 따라갑니다. 수요예측과 점주 승인, QR 접속과 자체 사이트 결제, 주문번호 픽업과
-            포인트 적립까지 이어집니다.
+            {store.name}의 마감 1시간을 따라갑니다. 수요예측과 점주 승인, 사이트에서 상품 확인과 포인트 사용·QR 결제,
+            주문번호 픽업과 포인트 적립까지 이어집니다.
           </p>
         </div>
         <Process3D />
@@ -196,6 +195,10 @@ function OwnerSection() {
           </div>
         </div>
 
+        <div data-reveal>
+          <PointPolicy />
+        </div>
+
         <div className="explain" data-reveal>
           <div className="explain__icon">
             <Icon name="chart" size={26} />
@@ -216,8 +219,9 @@ function OwnerSection() {
 
 function CustomerSection() {
   const screens = [
-    { title: '마감 상품 선택', desc: `한정 ${product.limitedQty}개 · ${won(product.price)}`, time: '22:14', el: <ProductScreen /> },
-    { title: '웹 선결제', desc: `포인트 ${pt(points.used)} 사용 → ${won(finalAmount)}`, time: '22:16', el: <PaymentScreen /> },
+    { title: '마감 상품 확인', desc: `${product.name} 한정 ${product.limitedQty}개 · ${won(product.price)}`, time: '22:14', el: <ProductScreen /> },
+    { title: '포인트 사용', desc: `${pt(points.used)} 사용 → ${won(finalAmount)}`, time: '22:15', el: <PaymentScreen /> },
+    { title: 'QR 결제', desc: `결제 QR을 ${payment.selectedMethod}로 스캔`, time: '22:16', el: <QrPayScreen /> },
     { title: '픽업 안내', desc: `픽업 번호 ${pickup.number}`, time: '22:17', el: <PickupScreen /> },
   ];
   return (
@@ -225,11 +229,12 @@ function CustomerSection() {
       <div className="container">
         <div className="section-head" data-reveal>
           <p className="step-tag">STEP 2 · 고객 화면</p>
-          <h2 id="customer-title">휴대폰으로 결제하고 주문번호로 픽업</h2>
-          <p>매장 QR로 자체 주문 사이트에 접속해 앱 설치 없이 고르고, 결제하고, 받은 번호로 매장에서 찾아갑니다.</p>
+          <h2 id="customer-title">사이트에서 고르고, QR로 결제하고, 주문번호로 픽업</h2>
+          <p>
+            고객은 Wasteoff 사이트에서 오늘 마감 상품을 확인합니다. 포인트를 쓴 뒤 사이트에 뜬 결제 QR을 간편결제 앱으로
+            스캔하면 픽업 번호가 나옵니다.
+          </p>
         </div>
-
-        <QrStrip />
 
         <ol className="phone-flow">
           {screens.map((s, i) => (
@@ -258,14 +263,17 @@ function CustomerSection() {
 }
 
 function DoneSection() {
-  const flowIcons = ['chart', 'check', 'qr', 'card', 'bag', 'gift'] as const;
+  const flowIcons = ['chart', 'check', 'unlock', 'qr', 'bag', 'gift'] as const;
   return (
     <section className="section section--done" id="done" aria-labelledby="done-title">
       <div className="container">
         <div className="section-head" data-reveal>
           <p className="step-tag">STEP 3 · 수령 완료</p>
           <h2 id="done-title">고객과 점주에게 보이는 결과</h2>
-          <p>직원이 픽업 번호를 확인해 건네면 주문이 끝나고, 남을 상품을 사 준 고객에게 포인트가 쌓입니다.</p>
+          <p>
+            직원이 픽업 번호를 확인해 건네면 주문이 끝나고, 상품별로 계산된 포인트가 쌓입니다. 오늘 적립한 포인트는
+            내일부터 쓸 수 있습니다.
+          </p>
         </div>
 
         <div className="result-grid">
@@ -316,7 +324,12 @@ function DoneSection() {
                 <strong className="minus">−{pt(points.used)}</strong>
               </li>
               <li>
-                <span>수령 후 {pt(points.earned)} 적립</span>
+                <span>
+                  수령 후 {pt(points.earned)} 적립
+                  <small className="points-list__note">
+                    {product.name} 유동 포인트 · 상한 {pt(pointPolicy.maxPoints)} 적용
+                  </small>
+                </span>
                 <strong className="plus">+{pt(points.earned)}</strong>
               </li>
             </ul>
@@ -324,6 +337,9 @@ function DoneSection() {
               <span>현재 잔액</span>
               <strong>{pt(points.balance)}</strong>
             </div>
+            <p className="points-card__usable">
+              오늘 사용 가능 <b>{pt(points.usableToday)}</b> · 내일부터 <b>{pt(points.balance)}</b> 사용 가능
+            </p>
           </div>
         </div>
 

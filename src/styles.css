@@ -1100,8 +1100,12 @@ a {
 /* 고객 화면 흐름 */
 .phone-flow {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 40px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 28px;
+}
+.phone-flow .phone {
+  width: 256px;
+  --phone-scale: 0.88;
 }
 .phone-flow__item {
   position: relative;
@@ -1141,7 +1145,7 @@ a {
 }
 .phone-flow__arrow {
   position: absolute;
-  right: -20px;
+  right: -14px;
   top: 52%;
   transform: translate(50%, -50%);
   display: grid;
@@ -1418,14 +1422,31 @@ a {
   }
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1180px) {
+  .phone-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 56px 28px;
+    justify-items: center;
+  }
+  .phone-flow .phone {
+    width: 292px;
+    --phone-scale: 1;
+  }
+  .phone-flow__item:nth-child(2) .phone-flow__arrow {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
   .phone-flow {
     grid-template-columns: 1fr;
     gap: 64px;
-    justify-items: center;
   }
   .phone-flow__item {
     max-width: 360px;
+  }
+  .phone-flow__item:nth-child(2) .phone-flow__arrow {
+    display: grid;
   }
   .phone-flow__arrow {
     right: 50%;
@@ -1433,6 +1454,9 @@ a {
     bottom: -32px;
     transform: translate(50%, 50%) rotate(90deg);
   }
+}
+
+@media (max-width: 980px) {
   .result-grid {
     grid-template-columns: 1fr;
   }
@@ -1792,82 +1816,6 @@ a {
   font-size: 13px;
 }
 
-/* ───────── QR 안내 ───────── */
-.qr-strip {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 20px 32px;
-  align-items: center;
-  margin-bottom: 56px;
-  padding: 24px;
-  border-radius: 28px;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow);
-}
-.qr-poster {
-  width: 188px;
-  padding: 0 0 12px;
-  border-radius: 18px;
-  overflow: hidden;
-  background: #fff;
-  border: 1px solid var(--line);
-  text-align: center;
-}
-.qr-poster__head {
-  display: block;
-  padding: 8px;
-  background: var(--green);
-  color: #fff;
-  font-weight: 800;
-  font-size: 15px;
-}
-.qr-poster .qr {
-  display: block;
-  width: 150px;
-  height: 150px;
-  margin: 10px auto 6px;
-}
-.qr-poster figcaption {
-  font-size: 12.5px;
-  color: var(--ink-2);
-}
-.qr-steps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
-.qr-steps li {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-.qr-steps__icon {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 14px;
-  background: var(--orange-soft);
-  color: var(--orange-deep);
-}
-.qr-steps strong {
-  font-size: 17px;
-  font-weight: 800;
-  color: var(--green);
-}
-.qr-steps p {
-  margin-top: 2px;
-  font-size: 14.5px;
-  color: var(--ink-2);
-}
-.qr-strip__note {
-  grid-column: 1 / -1;
-  font-size: 13px;
-  color: var(--ink-3);
-}
-
 /* ───────── 3D 과정 ───────── */
 .section--process {
   background: linear-gradient(180deg, var(--ivory), var(--ivory-2));
@@ -2155,14 +2103,6 @@ a {
 }
 
 @media (max-width: 980px) {
-  .qr-strip {
-    grid-template-columns: 1fr;
-    justify-items: center;
-  }
-  .qr-steps {
-    grid-template-columns: 1fr;
-    justify-self: stretch;
-  }
   .stage3d__controls {
     flex-direction: column;
     align-items: stretch;
@@ -2224,5 +2164,284 @@ a {
 @media (max-width: 1080px) and (min-width: 981px) {
   .flow {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* ───────── 사이트 화면 (상품 목록, QR 결제) ───────── */
+.screen__body--tight {
+  padding-top: 6px;
+}
+.feature__photo {
+  position: relative;
+  border-radius: 14px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+}
+.feature__photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.limit-chip--on-photo {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+}
+.feature__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 8px;
+}
+.feature__row .product-price {
+  margin: 0;
+  font-size: 1.35em;
+}
+.feature__deadline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 5px;
+  margin-top: 4px;
+  font-size: 0.8em;
+  color: var(--ink-2);
+}
+.feature__deadline b {
+  color: var(--ink);
+  font-weight: 800;
+}
+.mini-list {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.mini-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.82em;
+}
+.mini-list__name {
+  font-weight: 700;
+}
+.mini-list__meta {
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.qrpay__amount-label {
+  margin-top: 6px;
+  font-size: 0.9em;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+.qrpay__sub {
+  font-size: 0.8em;
+  color: var(--ink-3);
+}
+.qrpay__code {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 18px;
+  border: 2px solid var(--green);
+  background: #fff;
+}
+.qrpay__code .qr {
+  display: block;
+  width: calc(150px * var(--phone-scale));
+  height: calc(150px * var(--phone-scale));
+}
+.qrpay__hint {
+  margin-top: 12px;
+  font-weight: 700;
+}
+.qrpay__hint b {
+  color: var(--green);
+}
+.qrpay__wait {
+  margin-top: 4px;
+  font-size: 0.8em;
+  color: var(--ink-3);
+}
+
+/* ───────── 유동 포인트 ───────── */
+.approval__pt {
+  font-weight: 800;
+  color: var(--green);
+  white-space: nowrap;
+}
+.approval__pt small {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--orange-deep);
+}
+.policy {
+  margin-top: 24px;
+  padding: 22px 24px;
+  border-radius: 24px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.policy__head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.policy__head strong {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--green);
+}
+.policy__head span {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--orange-deep);
+}
+.policy__formula {
+  margin-top: 12px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: var(--green);
+  color: #fff;
+  font-size: 17px;
+  font-weight: 700;
+}
+.policy__limits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.policy__limits li {
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--orange-soft);
+  color: var(--orange-deep);
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.policy__table {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+.policy__table th,
+.policy__table td {
+  padding: 9px 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+}
+.policy__table th:first-child {
+  text-align: left;
+}
+.policy__table thead th {
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.policy__table tbody th {
+  font-weight: 700;
+}
+.policy__table tr.is-main {
+  background: var(--orange-soft);
+}
+.policy__table b {
+  color: var(--green);
+  font-weight: 800;
+}
+.policy__table small {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--orange);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+.pt-chip {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green);
+  font-size: 0.78em;
+  font-weight: 800;
+}
+.mini-list__meta b {
+  color: var(--green);
+}
+.earn-note {
+  margin-top: 8px;
+  font-size: 0.8em;
+  color: var(--ink-2);
+}
+.earn-note b {
+  color: var(--green);
+}
+.points-list__note {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+.points-card__usable {
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.points-card__usable b {
+  color: var(--ink);
+}
+@media (max-width: 720px) {
+  .policy {
+    padding: 18px;
+  }
+  .policy__formula {
+    font-size: 15px;
+  }
+  .policy__table {
+    font-size: 13px;
+  }
+  .approval__table {
+    font-size: 13.5px;
+  }
+}
+
+.pay-methods--row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+.pay-methods--row li {
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 2px;
+  font-size: 0.74em;
+  text-align: center;
+}
+.pay-methods--row .radio {
+  width: 12px;
+  height: 12px;
+}
+.pay-methods--row .is-selected .radio {
+  border-width: 4px;
+}
+
+.site-nav a {
+  white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .site-nav__num {
+    display: none;
+  }
+  .site-nav a {
+    padding: 7px 10px;
+    font-size: 14px;
   }
 }

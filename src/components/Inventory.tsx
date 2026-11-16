@@ -1,4 +1,4 @@
-import { forecastBasis, inventory, limitedQty, product, recommendations, store } from '../data';
+import { forecastBasis, inventory, limitedQty, pointPolicy, product, pt, recommendations, store } from '../data';
 import { Icon, MockBadge } from './ui';
 
 type Kind = 'order' | 'regular' | 'safety' | 'open';
@@ -161,6 +161,7 @@ export function ApprovalList() {
             <th scope="col">상품</th>
             <th scope="col">재고</th>
             <th scope="col">추천 수량</th>
+            <th scope="col">적립 포인트</th>
             <th scope="col">승인</th>
           </tr>
         </thead>
@@ -173,6 +174,10 @@ export function ApprovalList() {
               </th>
               <td>{r.stock}</td>
               <td className="approval__qty">{r.expectedLeft}개</td>
+              <td className="approval__pt">
+                +{pt(r.reward.points)}
+                {r.reward.capped && <small>상한 적용</small>}
+              </td>
               <td>
                 <span className="approval__check" aria-label="승인됨">
                   <Icon name="check" size={16} />
@@ -190,6 +195,53 @@ export function ApprovalList() {
           <Icon name="check" size={16} /> 승인 완료
         </span>
       </div>
+    </div>
+  );
+}
+
+const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+/** 유동 포인트 규칙과 상품별 계산 */
+export function PointPolicy() {
+  return (
+    <div className="policy">
+      <div className="policy__head">
+        <strong>상품별 유동 포인트</strong>
+        <span>재고와 수요예측으로 자동 계산 · 상한 있음</span>
+      </div>
+      <p className="policy__formula">
+        적립 포인트 = 가격 × ({pct(pointPolicy.baseRate)} + 남을 예상 비율 × {pct(pointPolicy.weight)})
+      </p>
+      <ul className="policy__limits">
+        <li>상한: 가격의 {pct(pointPolicy.maxRate)}</li>
+        <li>상한: 1개당 {pt(pointPolicy.maxPoints)}</li>
+        <li>적립 당일 사용 불가 · {pointPolicy.usableFrom}</li>
+      </ul>
+      <table className="policy__table">
+        <thead>
+          <tr>
+            <th scope="col">상품</th>
+            <th scope="col">남을 예상</th>
+            <th scope="col">계산값</th>
+            <th scope="col">적립</th>
+          </tr>
+        </thead>
+        <tbody>
+          {recommendations.map((r) => (
+            <tr key={r.name} className={r.main ? 'is-main' : undefined}>
+              <th scope="row">{r.name}</th>
+              <td>
+                {r.expectedLeft}/{r.stock} ({pct(r.reward.leftRatio)})
+              </td>
+              <td>{pt(Math.round(r.reward.raw))}</td>
+              <td>
+                <b>+{pt(r.reward.points)}</b>
+                {r.reward.capped && <small>상한</small>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { finalAmount, inventory, limitedQty, pickup, points, product, store, won, pt } from '../data';
+import { finalAmount, inventory, limitedQty, mainReward, pickup, pointPolicy, points, product, store, won, pt } from '../data';
 
 /** 3D 과정의 단계. 3D 모듈을 불러오기 전에도 화면 문구를 보여 줄 수 있도록 three와 분리해 둡니다. */
 export interface ProcessStep {
@@ -22,22 +22,22 @@ export const processSteps: ProcessStep[] = [
     key: 'approve',
     label: '점주 승인',
     headline: `${limitedQty}개 판매 공개`,
-    desc: `점주는 추천된 상품과 수량을 확인하고 승인만 합니다. 승인된 ${limitedQty}개가 한정 판매로 열리고 매장 앞 QR 포스터에 표시됩니다.`,
+    desc: `점주는 추천된 상품과 수량을 확인하고 승인만 합니다. 승인된 ${limitedQty}개가 Wasteoff 사이트에 한정 판매로 올라갑니다.`,
     duration: 6000,
   },
   {
-    key: 'qr',
-    label: 'QR 접속',
-    headline: 'QR 스캔',
-    desc: '고객이 매장 앞 포스터의 QR을 휴대폰 카메라로 찍으면, 앱 설치 없이 자체 주문 사이트가 열립니다.',
-    duration: 6500,
+    key: 'browse',
+    label: '사이트 확인',
+    headline: '마감 상품 확인',
+    desc: `고객은 Wasteoff 사이트에서 ${store.name}의 오늘 마감 상품과 남은 수량, 주문·픽업 마감 시간을 확인합니다.`,
+    duration: 6000,
   },
   {
     key: 'pay',
-    label: '웹 결제',
+    label: 'QR 결제',
     headline: won(finalAmount),
-    desc: `자체 사이트에서 ${product.name}(${won(product.price)})를 고르고 ${pt(points.used)}를 써서 ${won(finalAmount)}을 선결제합니다.`,
-    duration: 7000,
+    desc: `전날까지 쌓인 ${pt(points.used)}를 쓰면 ${won(finalAmount)}이 남고, 사이트에 뜬 결제 QR을 간편결제 앱으로 스캔해 선결제합니다.`,
+    duration: 7500,
   },
   {
     key: 'pickup',
@@ -50,7 +50,7 @@ export const processSteps: ProcessStep[] = [
     key: 'reward',
     label: '포인트 적립',
     headline: `+${pt(points.earned)}`,
-    desc: `수령이 끝나면 ${pt(points.earned)}가 적립되어 잔액은 ${pt(points.balance)}가 됩니다.`,
+    desc: `포인트는 상품별 재고와 수요예측으로 정해집니다. ${product.name}은 계산값 ${pt(Math.round(mainReward.raw))}이지만 상한 ${pt(pointPolicy.maxPoints)}가 적용되고, 오늘 적립분은 내일부터 쓸 수 있습니다.`,
     duration: 5500,
   },
 ];

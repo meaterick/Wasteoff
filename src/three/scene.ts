@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import dosirakUrl from '../assets/dosirak-1440.jpg';
-import { inventory, limitedQty, pickup, points, product, pt, store } from '../data';
-import { drawPoster, drawScreen, drawSign, drawTile, loadFonts, type ScreenKind } from './textures';
+import { finalAmount, inventory, limitedQty, payment, pickup, points, product, pt, store, won } from '../data';
+import { drawLaptop, drawScreen, drawSign, drawTile, loadFonts, type LaptopKind } from './textures';
 
 /**
  * 편의점 마감 판매 과정을 보여 주는 3D 장면.
@@ -33,18 +33,18 @@ const COL = {
 const FRIDGE = { x: -2.5, zBack: -4.0, zFront: -3.2, w: 3.8, h: 2.15 };
 const SHELF_Y = [1.36, 0.76]; // 윗칸, 아랫칸
 const COUNTER = { x: 2.6, z: -0.95 };
-const POSTER = { x: 4.35, z: 2.75 };
-const CUSTOMER_IDLE: V3 = [6.6, 0, 5.4];
-const CUSTOMER_AT_POSTER: V3 = [4.35, 0, 3.7];
+const TABLE = { x: 5.4, z: 3.75 }; // 매장 앞 야외 테이블 (고객이 노트북으로 사이트를 보는 곳)
+const CUSTOMER_IDLE: V3 = [7.4, 0, 5.8];
+const CUSTOMER_AT_TABLE: V3 = [TABLE.x, 0, TABLE.z + 0.72];
 const CUSTOMER_AT_COUNTER: V3 = [2.75, 0, -0.12];
-const WALK_TO_COUNTER: V3[] = [CUSTOMER_AT_POSTER, [3.2, 0, 3.15], [2.9, 0, 2.1], [2.8, 0, 0.9], CUSTOMER_AT_COUNTER];
-const WALK_TO_POSTER: V3[] = [CUSTOMER_IDLE, [5.6, 0, 4.6], CUSTOMER_AT_POSTER];
+const WALK_TO_COUNTER: V3[] = [CUSTOMER_AT_TABLE, [4.3, 0, 4.0], [3.0, 0, 2.6], [2.85, 0, 1.4], CUSTOMER_AT_COUNTER];
+const WALK_TO_TABLE: V3[] = [CUSTOMER_IDLE, [6.4, 0, 5.1], CUSTOMER_AT_TABLE];
 
 const SHOTS: { pos: V3; target: V3 }[] = [
   { pos: [-0.7, 2.35, 1.3], target: [-2.5, 1.05, -3.5] },
   { pos: [1.7, 3.0, 1.5], target: [-0.4, 0.95, -2.6] },
-  { pos: [7.6, 2.4, 7.6], target: [4.5, 1.15, 3.2] },
-  { pos: [7.2, 2.2, 7.2], target: [4.5, 1.15, 3.3] },
+  { pos: [6.15, 1.42, 4.55], target: [5.35, 0.98, 3.62] },
+  { pos: [7.0, 1.95, 5.9], target: [5.3, 1.0, 3.8] },
   { pos: [8.4, 5.6, 2.2], target: [1.8, 0.6, -0.2] },
   { pos: [4.6, 2.5, 1.5], target: [2.5, 1.15, -0.7] },
 ];
@@ -328,35 +328,48 @@ export async function createScene(host: HTMLElement, opts: { reducedMotion: bool
   pos.traverse((o) => (o.castShadow = true));
   scene.add(pos);
 
-  // ───── QR 포스터 (입간판) ─────
-  const posterTex = canvasTex(drawPoster());
-  const poster = new THREE.Group();
-  poster.position.set(POSTER.x, 0, POSTER.z);
-  const posterBoard = new THREE.Mesh(track(new THREE.PlaneGeometry(0.66, 0.946)), track(new THREE.MeshStandardMaterial({ map: posterTex, roughness: 0.5 })));
-  posterBoard.position.set(0, 1.08, 0.03);
-  posterBoard.rotation.x = -0.12;
-  const posterBack = new THREE.Mesh(box(0.74, 1.04, 0.04), mat(COL.green));
-  posterBack.position.set(0, 1.08, 0);
-  posterBack.rotation.x = -0.12;
-  const legs = [-0.3, 0.3].map((x) => {
-    const l = new THREE.Mesh(box(0.04, 0.62, 0.04), mat(COL.green));
-    l.position.set(x, 0.31, -0.03);
-    return l;
-  });
-  poster.add(posterBack, posterBoard, ...legs);
-  poster.rotation.y = 0.15;
-  poster.traverse((o) => {
-    o.castShadow = true;
-  });
-  scene.add(poster);
-  poster.updateMatrixWorld(true);
-  const posterCorners = [
-    [-0.3, -0.43],
-    [0.3, -0.43],
-    [0.3, 0.43],
-    [-0.3, 0.43],
-  ].map(([x, y]) => posterBoard.localToWorld(new THREE.Vector3(x, y, 0.01)));
-  const posterCenter = posterBoard.localToWorld(new THREE.Vector3(0, 0.05, 0.02));
+  // ───── 매장 앞 테이블과 노트북 (고객이 Wasteoff 사이트를 보는 화면) ─────
+  const tableMat = mat('#f6f1e4', { roughness: 0.5 });
+  const tableTop = mesh(track(new THREE.CylinderGeometry(0.55, 0.55, 0.05, 40)), tableMat, [TABLE.x, 0.74, TABLE.z]);
+  void tableTop;
+  mesh(track(new THREE.CylinderGeometry(0.05, 0.05, 0.72, 16)), mat(COL.green), [TABLE.x, 0.37, TABLE.z]);
+  mesh(track(new THREE.CylinderGeometry(0.3, 0.3, 0.03, 32)), mat(COL.green), [TABLE.x, 0.015, TABLE.z]);
+  const laptop = new THREE.Group();
+  laptop.position.set(TABLE.x, 0.765, TABLE.z - 0.05);
+  const lapBase = new THREE.Mesh(box(0.84, 0.025, 0.52), mat('#c9ccd0', { metalness: 0.4, roughness: 0.4 }));
+  lapBase.position.set(0, 0.0125, 0.06);
+  const lapLid = new THREE.Group();
+  lapLid.position.set(0, 0.025, -0.2);
+  lapLid.rotation.x = -0.22;
+  const lapBack = new THREE.Mesh(box(0.84, 0.53, 0.02), mat('#c9ccd0', { metalness: 0.4, roughness: 0.4 }));
+  lapBack.position.set(0, 0.265, -0.011);
+  const laptopTex = (['list', 'checkout', 'qr', 'done'] as LaptopKind[]).reduce(
+    (acc, k) => ({ ...acc, [k]: canvasTex(drawLaptop(k, photo)) }),
+    {} as Record<LaptopKind, THREE.Texture>,
+  );
+  const laptopMat = track(new THREE.MeshBasicMaterial({ map: laptopTex.list, toneMapped: false }));
+  const lapScreen = new THREE.Mesh(track(new THREE.PlaneGeometry(0.8, 0.5)), laptopMat);
+  lapScreen.position.set(0, 0.265, 0.001);
+  lapLid.add(lapBack, lapScreen);
+  laptop.add(lapBase, lapLid);
+  laptop.traverse((o) => (o.castShadow = true));
+  scene.add(laptop);
+  laptop.updateMatrixWorld(true);
+  const laptopCorners = [
+    [-0.4, -0.25],
+    [0.4, -0.25],
+    [0.4, 0.25],
+    [-0.4, 0.25],
+  ].map(([x, y]) => lapScreen.localToWorld(new THREE.Vector3(x, y, 0.005)));
+  const laptopCenter = lapScreen.localToWorld(new THREE.Vector3(0, 0, 0.01));
+  let currentLaptop: LaptopKind = 'list';
+  const setLaptop = (k: LaptopKind) => {
+    if (k !== currentLaptop) {
+      laptopMat.map = laptopTex[k];
+      laptopMat.needsUpdate = true;
+      currentLaptop = k;
+    }
+  };
 
   // ───── 사람 ─────
   function person(shirt: string, pants: string, hair: string, apron?: string) {
@@ -401,22 +414,18 @@ export async function createScene(host: HTMLElement, opts: { reducedMotion: bool
   const customer = person('#3b4a6b', '#2b2f3a', '#3a2a20');
   customer.g.position.set(...CUSTOMER_IDLE);
 
-  // ───── 휴대폰 ─────
-  const screens = (['scan', 'scanFound', 'product', 'pay', 'done'] as ScreenKind[]).reduce(
-    (acc, k) => ({ ...acc, [k]: canvasTex(drawScreen(k, photo)) }),
-    {} as Record<ScreenKind, THREE.Texture>,
-  );
+  // ───── 휴대폰 (간편결제 앱으로 결제 QR 스캔) ─────
+  const phoneTex = { scan: canvasTex(drawScreen('scan')), done: canvasTex(drawScreen('done')) };
   const phone = new THREE.Group();
   const phoneBody = new THREE.Mesh(box(0.47, 0.95, 0.045), mat('#15221b', { roughness: 0.3 }));
-  const screenMat = track(new THREE.MeshBasicMaterial({ map: screens.product, toneMapped: false }));
+  const screenMat = track(new THREE.MeshBasicMaterial({ map: phoneTex.scan, toneMapped: false }));
   const phoneScreen = new THREE.Mesh(track(new THREE.PlaneGeometry(0.43, 0.876)), screenMat);
   phoneScreen.position.z = 0.0235;
   phone.add(phoneBody, phoneScreen);
   phoneBody.castShadow = true;
   scene.add(phone);
-  let currentScreen: ScreenKind = 'product';
 
-  // 스캔 빛 (휴대폰 → 포스터)
+  // 스캔 빛 (휴대폰 → 노트북 화면의 결제 QR)
   const beamGeo = new THREE.BufferGeometry();
   beamGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(4 * 3 * 3), 3));
   track(beamGeo);
@@ -426,9 +435,6 @@ export async function createScene(host: HTMLElement, opts: { reducedMotion: bool
   const beam = new THREE.Mesh(beamGeo, beamMat);
   beam.frustumCulled = false;
   scene.add(beam);
-  const scanLine = new THREE.Mesh(track(new THREE.PlaneGeometry(0.62, 0.025)), track(new THREE.MeshBasicMaterial({ color: '#4be08a', transparent: true, opacity: 0 })));
-  posterBoard.add(scanLine);
-  scanLine.position.z = 0.012;
 
   // ───── 포인트 코인 ─────
   const coin = new THREE.Group();
@@ -465,10 +471,11 @@ export async function createScene(host: HTMLElement, opts: { reducedMotion: bool
   approveLabel.obj.position.set(fx + 2.6, 1.55, FRIDGE.zFront + 0.6);
   scene.add(approveLabel.obj);
   scene.add(openSign.obj);
-  const posterLabel = makeLabel('l3--note', `한정 ${limitedQty}개 · QR 주문`);
-  posterLabel.obj.position.set(POSTER.x, 1.85, POSTER.z);
-  scene.add(posterLabel.obj);
-  const scanLabel = makeLabel('l3--scan', 'QR 스캔');
+  const siteLabel = makeLabel('l3--note', '');
+  siteLabel.obj.position.copy(laptopCenter).add(new THREE.Vector3(0, 0.5, 0));
+  scene.add(siteLabel.obj);
+  const scanLabel = makeLabel('l3--scan', `${payment.selectedMethod} 앱으로 결제 QR 스캔`);
+  scanLabel.obj.position.copy(laptopCenter).add(new THREE.Vector3(0, 0.5, 0));
   scene.add(scanLabel.obj);
   const counterLabel = makeLabel('l3--counter', '');
   counterLabel.obj.position.set(COUNTER.x + 1.0, 1.5, COUNTER.z);
@@ -530,14 +537,6 @@ export async function createScene(host: HTMLElement, opts: { reducedMotion: bool
 
   const damp = (k: number, dt: number) => (opts.reducedMotion ? 1 : 1 - Math.exp(-k * dt));
 
-  function setScreen(k: ScreenKind) {
-    if (k !== currentScreen) {
-      screenMat.map = screens[k];
-      screenMat.needsUpdate = true;
-      currentScreen = k;
-    }
-  }
-
   function update(dt: number) {
     const t = opts.reducedMotion ? 99 : stepTime;
     shotFor(step);
@@ -574,10 +573,10 @@ export async function createScene(host: HTMLElement, opts: { reducedMotion: bool
     if (step <= 1) {
       customerTarget.set(...CUSTOMER_IDLE);
     } else if (step === 2) {
-      along(WALK_TO_POSTER, prog(t, 0.1, 1.7), customerTarget);
-      walking = t > 0.1 && t < 1.7;
+      along(WALK_TO_TABLE, prog(t, 0.1, 1.6), customerTarget);
+      walking = t > 0.1 && t < 1.6;
     } else if (step === 3) {
-      customerTarget.set(...CUSTOMER_AT_POSTER);
+      customerTarget.set(...CUSTOMER_AT_TABLE);
     } else if (step === 4) {
       along(WALK_TO_COUNTER, (t - 0.1) / 2.6, customerTarget);
       walking = t > 0.1 && t < 2.7;
@@ -591,7 +590,7 @@ export async function createScene(host: HTMLElement, opts: { reducedMotion: bool
     let yawTarget: number;
     if (speed > 0.25) yawTarget = Math.atan2(moved.x, moved.z);
     else if (step <= 1) yawTarget = -Math.PI / 2 - 0.4;
-    else if (step <= 3) yawTarget = Math.atan2(POSTER.x - customer.g.position.x, POSTER.z - customer.g.position.z);
+    else if (step <= 3) yawTarget = Math.PI; // 노트북을 바라봄
     else yawTarget = Math.PI;
     let dy = yawTarget - customerYaw;
     dy = Math.atan2(Math.sin(dy), Math.cos(dy));
@@ -628,61 +627,43 @@ export async function createScene(host: HTMLElement, opts: { reducedMotion: bool
       sold.obj.rotation.y = p2 > 0.5 ? customerYaw : 0;
     }
 
-    // 휴대폰: 손에 들기 / 크게 띄워 보여 주기
-    const bigPhone = (step === 2 && t > 2.7) || step === 3;
-    const raised = step === 2 && t > 1.6;
-    const phoneHand = new THREE.Vector3().copy(customer.g.position).addScaledVector(fwd, 0.34);
-    phoneHand.y = raised ? 1.38 : 1.08;
+    // 휴대폰: 결제 QR을 찍을 때 노트북 화면 쪽으로 듦
+    const scanning = step === 3 && t > 2.0 && t < 4.8;
+    const phoneHand = new THREE.Vector3().copy(customer.g.position).addScaledVector(fwd, scanning ? 0.5 : 0.34);
+    phoneHand.y = scanning ? 1.22 : 1.08;
     if (step >= 4) phoneHand.addScaledVector(tmp.set(Math.cos(customerYaw), 0, -Math.sin(customerYaw)), 0.28);
-    if (bigPhone) {
-      // 카메라 앞, 화면 오른쪽에 크게
-      const dist = 2.0;
-      const dir = tmp.subVectors(shotPos, shotTarget).normalize();
-      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), dir).normalize();
-      const camDist = shotPos.distanceTo(shotTarget) - dist;
-      const visH = 2 * camDist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-      const aspect = width / height;
-      const scale = (visH * (aspect < 1 ? 0.62 : 0.74)) / 0.95;
-      const offX = aspect < 1 ? 0 : visH * aspect * 0.2;
-      const p = new THREE.Vector3().copy(shotTarget).addScaledVector(dir, dist).addScaledVector(right, offX);
-      p.y += visH * 0.02;
-      phone.position.lerp(p, damp(6, dt));
-      const s = phone.scale.x + (scale - phone.scale.x) * damp(6, dt);
-      phone.scale.setScalar(s);
-      // 화면(+z)이 카메라를 향하도록
-      const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(shotPos, phone.position, new THREE.Vector3(0, 1, 0)));
-      phone.quaternion.slerp(q, damp(6, dt));
-    } else {
-      phone.position.lerp(phoneHand, damp(10, dt));
-      const s = phone.scale.x + (0.17 - phone.scale.x) * damp(8, dt);
-      phone.scale.setScalar(s);
-      const facing = raised ? customerYaw : customerYaw + Math.PI;
-      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(raised ? 0 : -0.6, facing, 0, 'YXZ'));
-      phone.quaternion.slerp(q, damp(8, dt));
+    phone.position.lerp(phoneHand, damp(10, dt));
+    // 휴대폰은 결제 단계부터 손에 듦
+    const ps = phone.scale.x + ((step >= 3 ? 0.17 : 0.001) - phone.scale.x) * damp(8, dt);
+    phone.scale.setScalar(ps);
+    // 스캔할 때는 카메라(뒷면)가 노트북을 향하고, 화면은 고객 쪽
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(scanning ? -0.35 : -0.6, customerYaw + Math.PI, 0, 'YXZ'));
+    phone.quaternion.slerp(q, damp(8, dt));
+    const phoneDone = step > 3 || (step === 3 && t > 4.4);
+    const wantTex = phoneDone ? phoneTex.done : phoneTex.scan;
+    if (screenMat.map !== wantTex) {
+      screenMat.map = wantTex;
+      screenMat.needsUpdate = true;
     }
 
-    // 화면 내용
-    if (step === 2) setScreen(t < 4.0 ? 'scan' : 'scanFound');
-    else if (step === 3) setScreen(t < 2.2 ? 'product' : t < 4.6 ? 'pay' : 'done');
-    else if (step >= 4) setScreen('done');
-    else setScreen('product');
+    // 노트북 화면 (Wasteoff 사이트)
+    if (step === 3) setLaptop(t < 1.6 ? 'checkout' : t < 4.4 ? 'qr' : 'done');
+    else if (step > 3) setLaptop('done');
+    else setLaptop('list');
 
     // 스캔 빛
-    const beamOn = step === 2 ? prog(t, 1.9, 2.2) * (1 - prog(t, 3.8, 4.2)) : 0;
-    beamMat.opacity = beamOn * 0.28;
-    scanLine.material.opacity = beamOn * 0.9;
-    scanLine.position.y = Math.sin(stepTime * 3.2) * 0.4;
+    const beamOn = step === 3 ? prog(t, 2.3, 2.6) * (1 - prog(t, 4.2, 4.5)) : 0;
+    beamMat.opacity = beamOn * 0.3;
     if (beamOn > 0) {
-      const apex = new THREE.Vector3().copy(phoneHand);
+      const apex = new THREE.Vector3().copy(phone.position);
       const arr = beamGeo.attributes.position.array as Float32Array;
       for (let i = 0; i < 4; i++) {
-        const a = posterCorners[i];
-        const b = posterCorners[(i + 1) % 4];
+        const a = laptopCorners[i];
+        const b = laptopCorners[(i + 1) % 4];
         arr.set([apex.x, apex.y, apex.z, a.x, a.y, a.z, b.x, b.y, b.z], i * 9);
       }
       beamGeo.attributes.position.needsUpdate = true;
     }
-    scanLabel.obj.position.copy(posterCenter).add(tmp.set(0, 0.62, 0.1));
 
     // 코인
     const coinP = step === 5 ? prog(t, 0.6, 1.8) : 0;
@@ -700,7 +681,13 @@ export async function createScene(host: HTMLElement, opts: { reducedMotion: bool
     });
     setOn(forecastLabel.inner, step === 0 && t > 2.4);
     setOn(openSign.inner, step === 1 && t > 2.0);
-    setOn(posterLabel.inner, step === 1 && t > 2.6);
+    let sText = '';
+    if (step === 1 && t > 2.6) sText = `Wasteoff 사이트에 한정 ${limitedQty}개 공개`;
+    else if (step === 2 && t > 1.4) sText = '사이트에서 오늘 마감 상품 확인';
+    else if (step === 3 && t < 2.3) sText = `포인트 ${pt(points.used)} 사용 → <b>${won(finalAmount)}</b>`;
+    else if (step === 3 && t > 4.5) sText = `QR 결제 완료 · 픽업 번호 <b>${pickup.number}</b>`;
+    if (sText) siteLabel.inner.innerHTML = sText;
+    setOn(siteLabel.inner, !!sText && beamOn < 0.5);
     setOn(scanLabel.inner, beamOn > 0.5);
 
     customerLabel.obj.position.copy(customer.g.position).add(tmp.set(0, 2.05, 0));
