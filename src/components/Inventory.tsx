@@ -1,11 +1,11 @@
-import { inventory, limitedQty, product, store } from '../data';
-import { MockBadge } from './ui';
+import { forecastBasis, inventory, limitedQty, product, recommendations, store } from '../data';
+import { Icon, MockBadge } from './ui';
 
 type Kind = 'order' | 'regular' | 'safety' | 'open';
 
 const segments: { kind: Kind; label: string; qty: number }[] = [
   { kind: 'order', label: '기존 확정 주문', qty: inventory.confirmedOrders },
-  { kind: 'regular', label: '예상 정상가 판매', qty: inventory.expectedRegularSales },
+  { kind: 'regular', label: '수요예측 정상가 판매', qty: inventory.expectedRegularSales },
   { kind: 'safety', label: '안전재고', qty: inventory.safetyStock },
   { kind: 'open', label: '한정 판매', qty: limitedQty },
 ];
@@ -46,10 +46,10 @@ export function StockBar({ compact = false }: { compact?: boolean }) {
 
 /** 숫자 카드 수식: 12 − 1 − 5 − 2 = 4 */
 export function Equation() {
-  const terms = [
+  const terms: { op: string; kind: string; label: string; qty: number; tag?: string }[] = [
     { op: '', kind: 'stock', label: '실물 재고', qty: inventory.onHand },
     { op: '−', kind: 'order', label: '기존 확정 주문', qty: inventory.confirmedOrders },
-    { op: '−', kind: 'regular', label: '예상 정상가 판매', qty: inventory.expectedRegularSales },
+    { op: '−', kind: 'regular', label: '수요예측 정상가 판매', qty: inventory.expectedRegularSales, tag: '23:00까지' },
     { op: '−', kind: 'safety', label: '안전재고', qty: inventory.safetyStock },
   ];
   return (
@@ -62,7 +62,10 @@ export function Equation() {
             </span>
           )}
           <div className={`num-card num-card--${t.kind}`}>
-            <span className="num-card__label">{t.label}</span>
+            <span className="num-card__label">
+              {t.label}
+              {t.tag && <em className="num-card__tag">{t.tag}</em>}
+            </span>
             <span className="num-card__value">
               {t.qty}
               <small>개</small>
@@ -75,7 +78,7 @@ export function Equation() {
           =
         </span>
         <div className="num-card num-card--open">
-          <span className="num-card__label">한정 판매</span>
+          <span className="num-card__label">남을 예상 · 한정 판매</span>
           <span className="num-card__value">
             {limitedQty}
             <small>개</small>
@@ -96,7 +99,7 @@ export function OwnerMiniPanel() {
         </span>
         <MockBadge />
       </div>
-      <p className="owner-mini__time">{store.checkTime} 재고 확인</p>
+      <p className="owner-mini__time">{store.checkTime} 수요예측 추천 도착</p>
       <div className="owner-mini__item">
         <span className="owner-mini__name">{product.name}</span>
         <span className="owner-mini__meta">{store.saleEnd} 판매 마감</span>
@@ -107,7 +110,7 @@ export function OwnerMiniPanel() {
           <dd>{inventory.onHand}</dd>
         </div>
         <div>
-          <dt>예상 판매</dt>
+          <dt>예측 판매</dt>
           <dd>{inventory.expectedRegularSales}</dd>
         </div>
         <div>
@@ -117,8 +120,75 @@ export function OwnerMiniPanel() {
       </dl>
       <StockBar compact />
       <div className="owner-mini__result">
-        <span>한정 판매 공개</span>
+        <span className="owner-mini__approve">
+          <Icon name="check" size={16} /> 점주 승인
+        </span>
+        <span>한정 판매</span>
         <strong>{limitedQty}개</strong>
+      </div>
+    </div>
+  );
+}
+
+/** 수요예측 근거 */
+export function ForecastBasis() {
+  return (
+    <div className="basis">
+      <span className="basis__title">
+        <Icon name="chart" size={16} /> 수요예측 근거
+      </span>
+      <ul>
+        {forecastBasis.map((b) => (
+          <li key={b}>{b}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** 점주 승인 목록: 수요예측이 추천한 오늘 남을 상품과 수량 */
+export function ApprovalList() {
+  const total = recommendations.reduce((a, r) => a + r.expectedLeft, 0);
+  return (
+    <div className="approval">
+      <div className="approval__head">
+        <strong>오늘 남을 상품 추천</strong>
+        <span>점주는 승인만</span>
+      </div>
+      <table className="approval__table">
+        <thead>
+          <tr>
+            <th scope="col">상품</th>
+            <th scope="col">재고</th>
+            <th scope="col">추천 수량</th>
+            <th scope="col">승인</th>
+          </tr>
+        </thead>
+        <tbody>
+          {recommendations.map((r) => (
+            <tr key={r.name} className={r.main ? 'is-main' : undefined}>
+              <th scope="row">
+                {r.name}
+                <small>{r.saleEnd} 판매 마감</small>
+              </th>
+              <td>{r.stock}</td>
+              <td className="approval__qty">{r.expectedLeft}개</td>
+              <td>
+                <span className="approval__check" aria-label="승인됨">
+                  <Icon name="check" size={16} />
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="approval__foot">
+        <span>
+          {recommendations.length}개 상품 · 총 {total}개
+        </span>
+        <span className="approval__done">
+          <Icon name="check" size={16} /> 승인 완료
+        </span>
       </div>
     </div>
   );

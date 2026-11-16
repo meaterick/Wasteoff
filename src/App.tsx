@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import dosirak from './assets/dosirak-1440.jpg';
 import { PaymentScreen, PickupScreen, ProductScreen } from './components/CustomerScreens';
-import { Equation, OwnerMiniPanel, StockBar } from './components/Inventory';
+import { ApprovalList, Equation, ForecastBasis, OwnerMiniPanel, StockBar } from './components/Inventory';
+import { Process3D } from './components/Process3D';
+import { QrStrip } from './components/QrStrip';
 import { Icon, MockBadge, Phone } from './components/ui';
 import { finalAmount, flowSteps, inventory, limitedQty, pickup, points, product, pt, store, won } from './data';
 
 const sections = [
-  { id: 'owner', label: '점주 화면' },
+  { id: 'process', label: '3D 과정' },
+  { id: 'owner', label: '점주 승인' },
   { id: 'customer', label: '고객 화면' },
   { id: 'done', label: '수령 완료' },
 ] as const;
@@ -88,11 +91,11 @@ function Hero() {
             한정 판매
           </h1>
           <p className="hero__lead">
-            오늘 남을 도시락을 미리 판매합니다. 점주는 예측된 수량만 공개하고, 고객은 휴대폰으로 선결제한 뒤
-            주문번호로 매장에서 픽업합니다.
+            오늘 남을 도시락을 미리 판매합니다. 수요예측이 남을 상품과 수량을 찾고 점주는 승인만 합니다. 고객은 매장
+            QR로 접속해 자체 사이트에서 선결제하고, 주문번호로 픽업한 뒤 포인트를 받습니다.
           </p>
           <div className="hero__actions">
-            <a href="#owner" className="btn btn--primary">
+            <a href="#process" className="btn btn--primary">
               판매 흐름 보기 <Icon name="down" size={18} />
             </a>
             <span className="hero__note">
@@ -123,6 +126,24 @@ function Hero() {
   );
 }
 
+function ProcessSection() {
+  return (
+    <section className="section section--process" id="process" aria-labelledby="process-title">
+      <div className="container">
+        <div className="section-head" data-reveal>
+          <p className="step-tag">한눈에 보기 · 3D</p>
+          <h2 id="process-title">3D로 보는 실제 과정</h2>
+          <p>
+            {store.name}의 마감 1시간을 따라갑니다. 수요예측과 점주 승인, QR 접속과 자체 사이트 결제, 주문번호 픽업과
+            포인트 적립까지 이어집니다.
+          </p>
+        </div>
+        <Process3D />
+      </div>
+    </section>
+  );
+}
+
 function OwnerSection() {
   return (
     <section className="section section--owner" id="owner" aria-labelledby="owner-title">
@@ -131,7 +152,8 @@ function OwnerSection() {
           <p className="step-tag">STEP 1 · 점주 화면</p>
           <h2 id="owner-title">오늘 몇 개를 판매에 열까?</h2>
           <p>
-            {store.checkTime}, {store.name} 점주가 {store.saleEnd}에 판매가 끝나는 {product.name} 재고를 확인합니다.
+            {store.checkTime}, 수요예측이 {store.name}에서 오늘 남을 상품과 수량을 추천합니다. 점주는 계산하지 않고,
+            추천된 한정 판매 상품과 수량을 확인해 승인만 합니다.
           </p>
         </div>
 
@@ -149,6 +171,10 @@ function OwnerSection() {
             <MockBadge />
           </div>
 
+          <ForecastBasis />
+          <p className="dashboard__sub">
+            수요예측 결과 · {product.name} ({store.saleEnd} 판매 마감)
+          </p>
           <Equation />
 
           <div className="dashboard__bar">
@@ -157,6 +183,7 @@ function OwnerSection() {
           </div>
 
           <div className="dashboard__result">
+            <ApprovalList />
             <div className="open-badge" data-reveal>
               <span className="open-badge__icon">
                 <Icon name="unlock" size={36} />
@@ -165,9 +192,7 @@ function OwnerSection() {
                 <strong>{limitedQty}개</strong> 판매 공개
               </span>
             </div>
-            <p className="dashboard__result-note">
-              주문 마감 {product.orderDeadline} · 픽업 마감 {product.pickupDeadline}
-            </p>
+
           </div>
         </div>
 
@@ -178,8 +203,9 @@ function OwnerSection() {
           <div>
             <h3>판매에 열리는 수량은 매일 다릅니다</h3>
             <p>
-              그날의 실물 재고와 예상 수요에 따라 공개 수량이 달라집니다. 정상가로 팔릴 몫과 안전재고는 남겨 두고,
-              남을 것으로 예측된 수량만 엽니다. 같은 12개라도 예상 정상가 판매가 9개인 날은 공개 수량이 0개입니다.
+              수요예측이 그날의 실물 재고와 예상 수요로 남을 수량을 다시 계산합니다. 정상가로 팔릴 몫과 안전재고는
+              남겨 두고 남을 것으로 보이는 수량만 추천합니다. 같은 12개라도 수요예측 판매가 9개인 날은 추천이
+              0개입니다. 주문 마감 {product.orderDeadline}, 픽업 마감 {product.pickupDeadline}.
             </p>
           </div>
         </div>
@@ -200,8 +226,10 @@ function CustomerSection() {
         <div className="section-head" data-reveal>
           <p className="step-tag">STEP 2 · 고객 화면</p>
           <h2 id="customer-title">휴대폰으로 결제하고 주문번호로 픽업</h2>
-          <p>앱 설치 없이 웹에서 고르고, 결제하고, 받은 번호로 매장에서 찾아갑니다.</p>
+          <p>매장 QR로 자체 주문 사이트에 접속해 앱 설치 없이 고르고, 결제하고, 받은 번호로 매장에서 찾아갑니다.</p>
         </div>
+
+        <QrStrip />
 
         <ol className="phone-flow">
           {screens.map((s, i) => (
@@ -230,14 +258,14 @@ function CustomerSection() {
 }
 
 function DoneSection() {
-  const flowIcons = ['chart', 'unlock', 'card', 'bag', 'gift'] as const;
+  const flowIcons = ['chart', 'check', 'qr', 'card', 'bag', 'gift'] as const;
   return (
     <section className="section section--done" id="done" aria-labelledby="done-title">
       <div className="container">
         <div className="section-head" data-reveal>
           <p className="step-tag">STEP 3 · 수령 완료</p>
           <h2 id="done-title">고객과 점주에게 보이는 결과</h2>
-          <p>직원이 픽업 번호를 확인해 건네면 주문이 끝나고, 고객에게 포인트가 쌓입니다.</p>
+          <p>직원이 픽업 번호를 확인해 건네면 주문이 끝나고, 남을 상품을 사 준 고객에게 포인트가 쌓입니다.</p>
         </div>
 
         <div className="result-grid">
@@ -338,12 +366,13 @@ export default function App() {
   const active = useScrollEffects();
   return (
     <>
-      <a className="skip-link" href="#owner">
+      <a className="skip-link" href="#process">
         시연 구간으로 건너뛰기
       </a>
       <Header active={active} />
       <main>
         <Hero />
+        <ProcessSection />
         <OwnerSection />
         <CustomerSection />
         <DoneSection />

@@ -26,9 +26,17 @@ export function Phone({ children, label, time }: { children: ReactNode; label: s
   );
 }
 
-type IconName = 'check' | 'clock' | 'pin' | 'arrow' | 'chart' | 'unlock' | 'card' | 'bag' | 'gift' | 'down';
+type IconName = 'qr' | 'check' | 'clock' | 'pin' | 'arrow' | 'chart' | 'unlock' | 'card' | 'bag' | 'gift' | 'down';
 
 const paths: Record<IconName, ReactNode> = {
+  qr: (
+    <>
+      <rect x="4" y="4" width="6" height="6" rx="1" />
+      <rect x="14" y="4" width="6" height="6" rx="1" />
+      <rect x="4" y="14" width="6" height="6" rx="1" />
+      <path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 19v1M19 14h1" />
+    </>
+  ),
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
   clock: (
     <>

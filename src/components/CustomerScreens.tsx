@@ -1,13 +1,22 @@
 import dosirak from '../assets/dosirak-1440.jpg';
-import { finalAmount, payment, pickup, product, pt, store, won } from '../data';
+import { finalAmount, payment, pickup, product, pt, site, store, won } from '../data';
 import { Icon } from './ui';
 
 function AppBar({ title, step }: { title: string; step?: string }) {
   return (
-    <div className="appbar">
+    <>
+      <div className="urlbar">
+        <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="5" y="10.5" width="14" height="10" rx="2" fill="currentColor" />
+          <path d="M8 10.5V8a4 4 0 018 0v2.5" fill="none" stroke="currentColor" strokeWidth="2.6" />
+        </svg>
+        {site.name}
+      </div>
+      <div className="appbar">
       <span className="appbar__title">{title}</span>
       {step && <span className="appbar__step">{step}</span>}
-    </div>
+      </div>
+    </>
   );
 }
 

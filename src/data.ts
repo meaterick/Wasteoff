@@ -14,7 +14,7 @@ export const product = {
   pickupDeadline: '22:50',
 };
 
-/** 점주 화면: 한정 판매 수량 계산 (12 − 1 − 5 − 2 = 4) */
+/** 제육 도시락의 수요예측 결과: 12 − 1 − 5 − 2 = 4 (예상 정상가 판매 5개가 수요예측 값) */
 export const inventory = {
   onHand: 12,
   confirmedOrders: 1,
@@ -27,6 +27,16 @@ export const limitedQty =
   inventory.confirmedOrders -
   inventory.expectedRegularSales -
   inventory.safetyStock;
+
+/** 수요예측에 쓰는 근거 (예시) */
+export const forecastBasis = ['최근 4주 같은 요일 판매', '시간대별 판매 흐름', '오늘 날씨·캠퍼스 일정'];
+
+/** 수요예측이 오늘 남을 것으로 본 상품과 추천 수량. 점주는 이 목록을 승인만 합니다. */
+export const recommendations = [
+  { name: '제육 도시락', stock: 12, expectedLeft: 4, saleEnd: '23:00', main: true },
+  { name: '참치마요 삼각김밥', stock: 9, expectedLeft: 3, saleEnd: '24:00', main: false },
+  { name: '햄치즈 샌드위치', stock: 6, expectedLeft: 2, saleEnd: '24:00', main: false },
+];
 
 export const payment = {
   pointsOwned: 500,
@@ -49,12 +59,19 @@ export const points = {
 };
 
 export const flowSteps = [
-  { key: 'forecast', label: '예측', desc: '오늘 남을 수량 계산' },
-  { key: 'open', label: '한정 공개', desc: '4개만 판매에 공개' },
-  { key: 'pay', label: '웹 결제', desc: '포인트 쓰고 4,500원' },
+  { key: 'forecast', label: '수요예측', desc: '오늘 남을 상품·수량 추천' },
+  { key: 'approve', label: '점주 승인', desc: '추천대로 4개 판매 공개' },
+  { key: 'qr', label: 'QR 접속', desc: '앱 설치 없이 주문 사이트로' },
+  { key: 'pay', label: '웹 결제', desc: '자체 사이트에서 4,500원' },
   { key: 'pickup', label: '주문번호 픽업', desc: 'A-024로 수령' },
-  { key: 'reward', label: '포인트 적립', desc: '수령 후 1,000P' },
+  { key: 'reward', label: '포인트 적립', desc: '남을 상품 구매로 1,000P' },
 ] as const;
+
+/** 자체 주문 사이트 표시 이름 (모의 화면의 주소창에 사용) */
+export const site = {
+  name: 'Wasteoff 웹 주문',
+  path: '캠퍼스점 마감 상품',
+};
 
 export const won = (n: number) => `${n.toLocaleString('ko-KR')}원`;
 export const pt = (n: number) => `${n.toLocaleString('ko-KR')}P`;
