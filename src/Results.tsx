@@ -30,7 +30,7 @@ function downloadResults(store: Store, participant: string) {
     ['참가자', '시나리오', '시작 예산(원)', '남은 예산(원)'],
     [participant, scenarios[store.scenario].name, openingBudget, budgetBalance(store)],
     [],
-    ['판매 방식', '정상가 판매', '마감 수령', '폐기 수량', '결제액(원)', '추정 이익(원)'],
+    ['판매 방식', '정상가 판매', '마감 판매', '폐기 수량', '결제액(원)', '추정 이익(원)'],
     ['일반 판매', control.regular, control.rescued, control.waste, control.cash, control.contribution],
     ['Wasteoff', wasteoff.regular, wasteoff.rescued, wasteoff.waste, wasteoff.cash, wasteoff.contribution],
     [],
@@ -65,7 +65,7 @@ export function Results({ store, participant, onShop, onClose, onReset }: {
   const chart = [
     { label: '폐기 수량', before: control.waste, after: wasteoff.waste },
     { label: '정상가 판매', before: control.regular, after: wasteoff.regular },
-    { label: '마감 수령', before: control.rescued, after: wasteoff.rescued },
+    { label: '마감 판매', before: control.rescued, after: wasteoff.rescued },
   ];
   const max = Math.max(1, ...chart.flatMap(row => [row.before, row.after]));
 
@@ -165,10 +165,10 @@ export function Results({ store, participant, onShop, onClose, onReset }: {
             <ul>
               <li>시나리오별로 정한 초기 재고와 15분마다의 일반 손님 수요를 두 방식에 동일하게 적용합니다.</li>
               <li>예측은 마감까지의 일반 수요 가정값입니다. 마감에 여는 수량은 초기 재고에서 예측과 안전재고를 뺀 값으로 제한합니다.</li>
-              <li>마감 주문은 추가 수요로 가정합니다. 결제하면 재고를 확보하고, 마감까지 수령을 마친 주문만 집계합니다.</li>
+              <li>마감 주문은 추가 수요로 가정합니다. 결제하면 재고를 확보하고, 매장에서 결제한 임박 상품과 수령을 마친 기존 주문을 집계합니다.</li>
               <li>추정 이익은 결제액에서 초기 재고의 원가, 수령 적립금과 폐기 비용(개당 {won(disposalCostPerUnit)})을 뺀 값입니다. 1P는 1원으로 계산합니다.</li>
             </ul>
-            <p>가상 재고와 수요를 사용한 결과입니다. 실제 매장의 폐기 감소나 수익은 현장 데이터로 검증해야 합니다.</p>
+            <p>임박 간편식 재고만 비교합니다. 일반 진열대의 상품은 판매·영수증에는 반영되고 이 표의 비교 대상에서 제외됩니다.</p>
           </details>
         </section>
       </div>

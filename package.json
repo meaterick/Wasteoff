@@ -3,12 +3,12 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "3D 편의점에서 체험하는 Wasteoff 마감 판매 실험",
+  "description": "1인칭과 3인칭으로 체험하는 Wasteoff 3D 편의점",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test tests/model.test.mjs"
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
   },
   "dependencies": {
     "idb": "^8.0.4",

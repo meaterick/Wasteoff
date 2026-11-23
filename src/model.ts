@@ -1,24 +1,7 @@
-export const products = [
-  {
-    id: 'dosirak', name: '제육 도시락', short: '도시락', label: 'JEYUK RICE', category: '도시락',
-    price: 5000, cost: 3000, stock: 12, safety: 2, color: '#ea825f',
-  },
-  {
-    id: 'sandwich', name: '햄치즈 샌드위치', short: '샌드위치', label: 'HAM & CHEESE', category: '샌드위치',
-    price: 3200, cost: 1800, stock: 8, safety: 1, color: '#a9cc8f',
-  },
-  {
-    id: 'onigiri', name: '참치마요 삼각김밥', short: '삼각김밥', label: 'TUNA MAYO', category: '삼각김밥',
-    price: 1500, cost: 850, stock: 8, safety: 1, color: '#f1ca69',
-  },
-  {
-    id: 'kimbap', name: '불고기 김밥', short: '김밥', label: 'BULGOGI ROLL', category: '김밥',
-    price: 3500, cost: 2050, stock: 9, safety: 1, color: '#b9a5df',
-  },
-] as const;
+import { getItem, items, lookupBarcode, products, type Item, type ProductId } from './catalog.ts';
+export { products, type Product, type ProductId } from './catalog.ts';
+import type { Product } from './catalog.ts';
 
-export type Product = (typeof products)[number];
-export type ProductId = Product['id'];
 type Quantities = Record<ProductId, number>;
 
 function quantities(dosirak = 0, sandwich = 0, onigiri = 0, kimbap = 0): Quantities {
@@ -69,6 +52,7 @@ export const closingTime = times[closingStep];
 type Line = { id: ProductId; quantity: number };
 type Order = {
   number: string;
+  receipt?: string;
   lines: Line[];
   subtotal: number;
   usedPoints: number;
@@ -85,13 +69,46 @@ export type Store = {
   cart: Quantities;
   usePoints: boolean;
   orders: Order[];
+  register?: Register;
+};
+
+type Basket = Record<string, number>;
+export type Payment = 'card' | 'cash';
+export type ReceiptLine = { sku: string; quantity: number; price: number; discount: number };
+export type Receipt = {
+  number: string;
+  time: string;
+  lines: ReceiptLine[];
+  subtotal: number;
+  discount: number;
+  usedPoints: number;
+  charged: number;
+  regularCharged: number;
+  reward: number;
+  method: Payment;
+  tendered: number;
+  change: number;
+  refunded?: boolean;
+};
+
+type Register = {
+  basket: Basket;
+  scanned: Basket;
+  usePoints: boolean;
+  receipts: Receipt[];
 };
 
 export type Action =
   | { type: 'add' | 'remove'; id: ProductId }
   | { type: 'points'; use: boolean }
   | { type: 'checkout' | 'pickup' | 'cancel' | 'advance' | 'close' }
-  | { type: 'reset'; scenario: ScenarioId };
+  | { type: 'reset'; scenario: ScenarioId }
+  | { type: 'basket-add' | 'basket-remove'; sku: string }
+  | { type: 'pos-scan'; barcode: string }
+  | { type: 'pos-clear' }
+  | { type: 'pos-points'; use: boolean }
+  | { type: 'pos-pay'; method: Payment; tendered?: number }
+  | { type: 'pos-refund'; number: string };
 
 export function newStore(scenario: ScenarioId): Store {
   return {
@@ -139,19 +156,15 @@ export function availableQuantity(store: Store, product: Product) {
   ));
 }
 
-export function offerStock(store: Store) {
-  const stock = quantities();
-  for (const product of products) stock[product.id] = availableQuantity(store, product);
-  return stock;
-}
-
 export function budgetBalance(store: Store) {
   const debits = store.orders.reduce((sum, order) => sum + (order.status === 'cancelled' ? 0 : order.cash), 0);
-  return openingBudget - debits;
+  const regular = (store.register?.receipts ?? []).reduce((sum, receipt) => sum + (receipt.refunded ? 0 : receipt.regularCharged), 0);
+  return openingBudget - debits - regular;
 }
 
 export function canRestart(store: Store) {
-  return store.orders.every(order => order.status === 'cancelled');
+  return store.orders.every(order => order.status === 'cancelled')
+    && (store.register?.receipts ?? []).every(receipt => receipt.refunded);
 }
 
 export function pointsBalance(store: Store) {
@@ -184,7 +197,7 @@ function advance(store: Store): Store {
   const next = { ...store, step, regular, control, orders };
   const cart = { ...store.cart };
   for (const product of products) cart[product.id] = Math.min(cart[product.id], availableQuantity(next, product));
-  return { ...next, cart };
+  return normalizeBasket({ ...next, cart });
 }
 
 function closeStore(store: Store) {
@@ -228,6 +241,14 @@ export function updateStore(store: Store, action: Action): Store {
       return advance(store);
     case 'close':
       return closeStore(store);
+    case 'basket-add':
+    case 'basket-remove':
+    case 'pos-scan':
+    case 'pos-clear':
+    case 'pos-points':
+    case 'pos-pay':
+    case 'pos-refund':
+      return updateRegister(store, action);
   }
 }
 
@@ -273,3 +294,116 @@ const numbers = new Intl.NumberFormat('ko-KR');
 export const number = (value: number) => numbers.format(value);
 export const won = (value: number) => number(value) + '원';
 export const points = (value: number) => number(value) + 'P';
+
+type RegisterAction = Extract<Action, { type: 'basket-add' | 'basket-remove' | 'pos-scan' | 'pos-clear' | 'pos-points' | 'pos-pay' | 'pos-refund' }>;
+
+export function registerState(store: Store): Register {
+  if (store.register) return store.register;
+  // An existing participant can finish the basket started in the preceding version.
+  const basket = Object.fromEntries(products.filter(({ id }) => store.cart[id] > 0).map(({ id }) => ['late-' + id, store.cart[id]]));
+  return { basket, scanned: {}, usePoints: store.usePoints, receipts: [] };
+}
+
+export function shelfStock(store: Store, item: Item) {
+  if (item.rescue) return availableQuantity(store, getProduct(item.rescue));
+  return item.stock - (store.register?.receipts ?? []).reduce((sum, receipt) =>
+    sum + (receipt.refunded ? 0 : receipt.lines.find(line => line.sku === item.sku)?.quantity ?? 0), 0);
+}
+
+export function pointReward(store: Store, item: Item) {
+  return item.rescue ? rewardPoints(store.scenario, getProduct(item.rescue)) : 0;
+}
+
+export function registerTotals(store: Store) {
+  const { basket, scanned, usePoints } = registerState(store);
+  const lines = items.flatMap(item => {
+    const quantity = basket[item.sku] ?? 0;
+    if (quantity === 0) return [];
+    const discount = item.offer === '2+1' ? Math.floor(quantity / 3) * item.price : 0;
+    return [{ item, quantity, scanned: scanned[item.sku] ?? 0, price: item.price, discount }];
+  });
+  const count = lines.reduce((sum, line) => sum + line.quantity, 0);
+  const scanCount = lines.reduce((sum, line) => sum + line.scanned, 0);
+  const subtotal = lines.reduce((sum, line) => sum + line.quantity * line.price, 0);
+  const discount = lines.reduce((sum, line) => sum + line.discount, 0);
+  const rescueSubtotal = lines.reduce((sum, line) => sum + (line.item.rescue ? line.quantity * line.price : 0), 0);
+  const usedPoints = usePoints ? Math.min(pointsBalance(store), rescueSubtotal) : 0;
+  const reward = lines.reduce((sum, line) => sum + pointReward(store, line.item) * line.quantity, 0);
+  return { lines, count, scanCount, subtotal, discount, rescueSubtotal, usedPoints, reward, charged: subtotal - discount - usedPoints };
+}
+
+function setRegister(store: Store, register: Register): Store {
+  return { ...store, register, cart: quantities(), usePoints: false };
+}
+
+function normalizeBasket(store: Store): Store {
+  if (!store.register) return store;
+  const register = store.register;
+  const basket = { ...register.basket };
+  const scanned = { ...register.scanned };
+  for (const item of items) {
+    if (!basket[item.sku]) continue;
+    basket[item.sku] = Math.min(basket[item.sku], shelfStock(store, item));
+    scanned[item.sku] = Math.min(scanned[item.sku] ?? 0, basket[item.sku]);
+  }
+  return setRegister(store, { ...register, basket, scanned });
+}
+
+function updateRegister(store: Store, action: RegisterAction): Store {
+  const register = registerState(store);
+  switch (action.type) {
+    case 'basket-add':
+    case 'basket-remove': {
+      const item = getItem(action.sku);
+      if (!item) return store;
+      const current = register.basket[item.sku] ?? 0;
+      const next = current + (action.type === 'basket-add' ? 1 : -1);
+      if (next < 0 || (action.type === 'basket-add' && next > shelfStock(store, item))) return store;
+      return setRegister(store, {
+        ...register,
+        basket: { ...register.basket, [item.sku]: next },
+        scanned: { ...register.scanned, [item.sku]: Math.min(register.scanned[item.sku] ?? 0, next) },
+      });
+    }
+    case 'pos-scan': {
+      const item = lookupBarcode(action.barcode);
+      if (!item) return store;
+      const scanned = register.scanned[item.sku] ?? 0;
+      if (scanned >= Math.min(register.basket[item.sku] ?? 0, shelfStock(store, item))) return store;
+      return setRegister(store, { ...register, scanned: { ...register.scanned, [item.sku]: scanned + 1 } });
+    }
+    case 'pos-clear':
+      return setRegister(store, { ...register, scanned: {} });
+    case 'pos-points':
+      return setRegister(store, { ...register, usePoints: action.use });
+    case 'pos-pay': {
+      const totals = registerTotals(store);
+      const budget = budgetBalance(store);
+      if (!totals.count || totals.scanCount !== totals.count || totals.charged > budget
+        || totals.lines.some(line => line.quantity > shelfStock(store, line.item))) return store;
+      const tendered = action.method === 'card' ? totals.charged : Number(action.tendered);
+      if (!Number.isInteger(tendered) || tendered < totals.charged || tendered > budget) return store;
+      const number = 'POS-' + String(register.receipts.length + 1).padStart(3, '0');
+      const receipt: Receipt = {
+        number, time: times[store.step],
+        lines: totals.lines.map(line => ({ sku: line.item.sku, quantity: line.quantity, price: line.price, discount: line.discount })),
+        subtotal: totals.subtotal, discount: totals.discount, usedPoints: totals.usedPoints, charged: totals.charged,
+        regularCharged: totals.charged - totals.rescueSubtotal + totals.usedPoints, reward: totals.reward,
+        method: action.method, tendered, change: tendered - totals.charged,
+      };
+      const rescueLines = totals.lines.flatMap(line => line.item.rescue ? [{ id: line.item.rescue, quantity: line.quantity }] : []);
+      const orders = rescueLines.length ? [...store.orders, {
+        number, receipt: number, lines: rescueLines, subtotal: totals.rescueSubtotal, usedPoints: totals.usedPoints,
+        cash: totals.rescueSubtotal - totals.usedPoints, reward: totals.reward, status: 'pickedUp' as const,
+      }] : store.orders;
+      return setRegister({ ...store, orders }, { basket: {}, scanned: {}, usePoints: false, receipts: [...register.receipts, receipt] });
+    }
+    case 'pos-refund': {
+      const receipt = register.receipts.find(previous => previous.number === action.number);
+      if (!receipt || receipt.refunded || (store.step >= closingStep && receipt.lines.some(line => getItem(line.sku)?.rescue))) return store;
+      const receipts = register.receipts.map(previous => previous === receipt ? { ...receipt, refunded: true } : previous);
+      const orders = store.orders.map(order => order.receipt === receipt.number ? { ...order, status: 'cancelled' as const } : order);
+      return setRegister({ ...store, orders }, { ...register, receipts });
+    }
+  }
+}
