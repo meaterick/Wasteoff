@@ -1,4 +1,4 @@
-import { getItem, items, lookupBarcode, products, type Item, type ProductId } from './catalog.ts';
+import { getItem, items, lookupBarcode, products, type Item, type Preparation, type ProductId } from './catalog.ts';
 export { products, type Product, type ProductId } from './catalog.ts';
 import type { Product } from './catalog.ts';
 
@@ -89,13 +89,18 @@ export type Receipt = {
   tendered: number;
   change: number;
   refunded?: boolean;
+  prepared?: Basket;
 };
+
+export const preparationTime = { microwave: 12_000, 'hot-water': 5_000 } satisfies Record<Preparation, number>;
+type PreparationJob = { receipt: string; sku: string; started: number; ends: number };
 
 type Register = {
   basket: Basket;
   scanned: Basket;
   usePoints: boolean;
   receipts: Receipt[];
+  preparation?: PreparationJob;
 };
 
 export type Action =
@@ -108,7 +113,9 @@ export type Action =
   | { type: 'pos-clear' }
   | { type: 'pos-points'; use: boolean }
   | { type: 'pos-pay'; method: Payment; tendered?: number }
-  | { type: 'pos-refund'; number: string };
+  | { type: 'pos-refund'; number: string }
+  | { type: 'service-start'; receipt: string; sku: string; now: number }
+  | { type: 'service-finish'; now: number };
 
 export function newStore(scenario: ScenarioId): Store {
   return {
@@ -248,6 +255,8 @@ export function updateStore(store: Store, action: Action): Store {
     case 'pos-points':
     case 'pos-pay':
     case 'pos-refund':
+    case 'service-start':
+    case 'service-finish':
       return updateRegister(store, action);
   }
 }
@@ -295,7 +304,7 @@ export const number = (value: number) => numbers.format(value);
 export const won = (value: number) => number(value) + '원';
 export const points = (value: number) => number(value) + 'P';
 
-type RegisterAction = Extract<Action, { type: 'basket-add' | 'basket-remove' | 'pos-scan' | 'pos-clear' | 'pos-points' | 'pos-pay' | 'pos-refund' }>;
+type RegisterAction = Extract<Action, { type: 'basket-add' | 'basket-remove' | 'pos-scan' | 'pos-clear' | 'pos-points' | 'pos-pay' | 'pos-refund' | 'service-start' | 'service-finish' }>;
 
 export function registerState(store: Store): Register {
   if (store.register) return store.register;
@@ -319,7 +328,8 @@ export function registerTotals(store: Store) {
   const lines = items.flatMap(item => {
     const quantity = basket[item.sku] ?? 0;
     if (quantity === 0) return [];
-    const discount = item.offer === '2+1' ? Math.floor(quantity / 3) * item.price : 0;
+    const groupSize = item.offer === '1+1' ? 2 : 3;
+    const discount = item.offer ? Math.floor(quantity / groupSize) * item.price : 0;
     return [{ item, quantity, scanned: scanned[item.sku] ?? 0, price: item.price, discount }];
   });
   const count = lines.reduce((sum, line) => sum + line.quantity, 0);
@@ -330,6 +340,23 @@ export function registerTotals(store: Store) {
   const usedPoints = usePoints ? Math.min(pointsBalance(store), rescueSubtotal) : 0;
   const reward = lines.reduce((sum, line) => sum + pointReward(store, line.item) * line.quantity, 0);
   return { lines, count, scanCount, subtotal, discount, rescueSubtotal, usedPoints, reward, charged: subtotal - discount - usedPoints };
+}
+
+export function eligiblePreparations(store: Store) {
+  return registerState(store).receipts.flatMap(receipt => {
+    if (receipt.refunded) return [];
+    return receipt.lines.flatMap(line => {
+      const item = getItem(line.sku);
+      const remaining = line.quantity - (receipt.prepared?.[line.sku] ?? 0);
+      return item?.preparation && remaining > 0 ? [{ receipt: receipt.number, item, remaining, method: item.preparation }] : [];
+    });
+  });
+}
+
+export function canRefundReceipt(store: Store, receipt: Receipt) {
+  return !receipt.refunded && !Object.values(receipt.prepared ?? {}).some(Boolean)
+    && registerState(store).preparation?.receipt !== receipt.number
+    && (store.step < closingStep || !receipt.lines.some(line => getItem(line.sku)?.rescue));
 }
 
 function setRegister(store: Store, register: Register): Store {
@@ -396,14 +423,33 @@ function updateRegister(store: Store, action: RegisterAction): Store {
         number, receipt: number, lines: rescueLines, subtotal: totals.rescueSubtotal, usedPoints: totals.usedPoints,
         cash: totals.rescueSubtotal - totals.usedPoints, reward: totals.reward, status: 'pickedUp' as const,
       }] : store.orders;
-      return setRegister({ ...store, orders }, { basket: {}, scanned: {}, usePoints: false, receipts: [...register.receipts, receipt] });
+      return setRegister({ ...store, orders }, { ...register, basket: {}, scanned: {}, usePoints: false, receipts: [...register.receipts, receipt] });
     }
     case 'pos-refund': {
       const receipt = register.receipts.find(previous => previous.number === action.number);
-      if (!receipt || receipt.refunded || (store.step >= closingStep && receipt.lines.some(line => getItem(line.sku)?.rescue))) return store;
+      if (!receipt || !canRefundReceipt(store, receipt)) return store;
       const receipts = register.receipts.map(previous => previous === receipt ? { ...receipt, refunded: true } : previous);
       const orders = store.orders.map(order => order.receipt === receipt.number ? { ...order, status: 'cancelled' as const } : order);
       return setRegister({ ...store, orders }, { ...register, receipts });
+    }
+    case 'service-start': {
+      if (register.preparation || !Number.isFinite(action.now)) return store;
+      const eligible = eligiblePreparations(store).find(option => option.receipt === action.receipt && option.item.sku === action.sku);
+      if (!eligible) return store;
+      return setRegister(store, {
+        ...register,
+        preparation: { receipt: action.receipt, sku: action.sku, started: action.now, ends: action.now + preparationTime[eligible.method] },
+      });
+    }
+    case 'service-finish': {
+      const job = register.preparation;
+      if (!job || !Number.isFinite(action.now) || action.now < job.ends) return store;
+      const receipts = register.receipts.map(receipt => {
+        if (receipt.number !== job.receipt || receipt.refunded) return receipt;
+        const prepared = receipt.prepared ?? {};
+        return { ...receipt, prepared: { ...prepared, [job.sku]: (prepared[job.sku] ?? 0) + 1 } };
+      });
+      return setRegister(store, { ...register, receipts, preparation: undefined });
     }
   }
 }

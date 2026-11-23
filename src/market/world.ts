@@ -2,12 +2,14 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import atlasUrl from '../assets/package-labels.webp';
 import { departments, items, type Destination, type Item } from '../catalog';
-import { makeAvatar } from './avatar';
-import { counter, fixtures, room } from './layout';
+import { makeAvatar, makeBasket } from './avatar';
+import { loadSurfaces } from './materials';
+import { counter, fixtures, room, service } from './layout';
 import { canvasMap, labelMap, priceMap, repeatedSurface, signMap } from './textures';
 
 export type Target = { type: 'item'; sku: string } | { type: 'area'; id: Destination };
 type P = [number, number, number];
+type ProductPart = [THREE.BufferGeometry, THREE.Material, P, number];
 type Stocked = { meshes: THREE.InstancedMesh[]; shown: number };
 const floorWidth = room.right - room.left;
 const floorDepth = room.front - room.rear;
@@ -18,12 +20,13 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
   const coat = (color: string, options: THREE.MeshStandardMaterialParameters = {}) =>
     keep(new THREE.MeshStandardMaterial({ color, roughness: 0.66, ...options }));
   const flat = (options: THREE.MeshBasicMaterialParameters) => keep(new THREE.MeshBasicMaterial({ toneMapped: false, ...options }));
-  const walls = coat('#e9e9df');
-  const trim = coat('#dedfd4', { roughness: 0.49 });
+  const surface = loadSurfaces(keep, onTexturesReady);
+  const walls = coat('#ebe9e0', { map: surface('paint'), roughness: .76 });
+  const trim = coat('#dedfd4', { roughness: .49 });
   const black = coat('#272f2e');
   const pine = coat('#264b3c', { roughness: 0.5 });
   const green = coat('#66816c');
-  const steel = coat('#b9c3be', { metalness: 0.25, roughness: 0.38 });
+  const steel = coat('#e4e9e2', { map: surface('steel'), metalness: .31, roughness: .39 });
   const shades = coat('#a9b3a5');
   const lateShelf = coat('#bd8747', { roughness: 0.51 });
   const shelfWhite = coat('#e4e8dc', { roughness: 0.45 });
@@ -33,6 +36,7 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
   }));
   const targets: THREE.Mesh[] = [];
   const stocks = new Map<string, Stocked>();
+  const products = new Map<string, ProductPart[]>();
   const hitMat = flat({ visible: false });
 
   function put(geometry: THREE.BufferGeometry, material: THREE.Material, position: P, parent: THREE.Object3D = scene) {
@@ -44,7 +48,7 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
 
   function box(w: number, h: number, d: number, material: THREE.Material, position: P,
     parent: THREE.Object3D = scene, radius = 0, cast = true) {
-    const geometry = radius ? new RoundedBoxGeometry(w, h, d, 2, radius) : new THREE.BoxGeometry(w, h, d);
+    const geometry = radius ? new RoundedBoxGeometry(w, h, d, radius > .024 ? 2 : 1, radius) : new THREE.BoxGeometry(w, h, d);
     const mesh = put(keep(geometry), material, position, parent);
     mesh.castShadow = cast && !material.transparent;
     mesh.receiveShadow = !material.transparent;
@@ -75,15 +79,46 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
     targets.push(hit);
   }
 
-  function surface(kind: 'porcelain' | 'pavement' | 'asphalt', u: number, v: number) {
-    const map = keep(repeatedSurface(kind));
-    map.repeat.set(u, v);
-    return coat('#ffffff', { map, roughness: kind === 'porcelain' ? 0.43 : 0.86 });
-  }
+  const environment = keep(canvasMap(768, 384, ctx => {
+    const sky = ctx.createLinearGradient(0, 0, 0, 384);
+    sky.addColorStop(0, '#878e99');
+    sky.addColorStop(.42, '#677c89');
+    sky.addColorStop(.60, '#4d5350');
+    sky.addColorStop(1, '#68645f');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, 768, 384);
+    ctx.fillStyle = '#fefcef';
+    for (const x of [62, 248, 441, 630]) ctx.fillRect(x, 41, 67, 13);
+    ctx.fillStyle = '#b4d1e6';
+    ctx.fillRect(93, 113, 301, 38);
+  }));
+  environment.mapping = THREE.EquirectangularReflectionMapping;
+  scene.environment = environment;
+  scene.environmentIntensity = .46;
 
-  horizontal(floorWidth, floorDepth, surface('porcelain', 12, 12), [0, 0, (room.rear + room.front) / 2]);
-  horizontal(18, 3.75, surface('pavement', 16, 2.9), [0, -0.041, 8.35]);
-  horizontal(54, 28, surface('asphalt', 27, 14), [0, -0.15, 21.8]);
+  const floorMap = surface('floor');
+  const floor = keep(new THREE.MeshPhysicalMaterial({
+    color: '#fffdf5', map: floorMap, roughness: .48, metalness: .025, clearcoat: .23,
+    clearcoatRoughness: .43, bumpMap: floorMap, bumpScale: .005,
+  }));
+  const pavement = keep(repeatedSurface('pavement'));
+  pavement.repeat.set(16, 2.9);
+  horizontal(floorWidth, floorDepth, floor, [0, 0, (room.rear + room.front) / 2]);
+  horizontal(18, 3.75, coat('#c4ced5', { map: pavement, roughness: .86 }), [0, -.041, 8.35]);
+  horizontal(54, 28, coat('#8a9aaa', { map: surface('street'), roughness: .72, metalness: .025 }), [0, -.15, 21.8]);
+
+  const contact = keep(canvasMap(192, 192, ctx => {
+    const gradient = ctx.createRadialGradient(96, 96, 30, 96, 96, 95);
+    gradient.addColorStop(0, '#13242755');
+    gradient.addColorStop(.68, '#14242436');
+    gradient.addColorStop(1, '#14242400');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 192, 192);
+  }));
+  const contactMat = flat({ map: contact, transparent: true, depthWrite: false });
+  for (const object of [...Object.values(fixtures), counter, service]) {
+    horizontal(object.width + .9, object.depth + .9, contactMat, [object.x, .003, object.z]);
+  }
   box(23.5, 0.12, 0.32, trim, [0, -0.092, 10.3], scene, 0.02);
   box(floorWidth + 0.26, room.ceiling, 0.18, walls, [0, room.ceiling / 2, room.rear - 0.03]);
   for (const x of [room.left - .06, room.right + .06]) {
@@ -91,20 +126,32 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
     box(0.054, 0.20, floorDepth, pine, [x < 0 ? x + 0.116 : x - 0.116, .14, 0]);
     box(0.041, 0.09, floorDepth, green, [x < 0 ? x + 0.108 : x - 0.108, 2.79, 0]);
   }
-  box(floorWidth, .11, floorDepth + .24, coat('#f1f0e8', { emissive: '#d9d7c9', emissiveIntensity: .18 }), [0, room.ceiling + 0.045, 0], scene, 0, false);
+  box(floorWidth, .11, floorDepth + .24, coat('#eeeeea', { map: surface('ceiling'), emissive: '#d9d7c9', emissiveIntensity: .20 }), [0, room.ceiling + 0.045, 0], scene, 0, false);
   for (let i = -4; i <= 4; i++) {
     box(.018, .022, floorDepth, shades, [i * 1.45, room.ceiling - .012, 0], scene, 0, false);
     box(floorWidth, .023, .016, shades, [0, room.ceiling - .012, i * 1.45], scene, 0, false);
   }
   for (const x of [-4.65, -1.59, 1.59, 4.65]) for (const z of [-4.65, -1.55, 1.55, 4.65]) {
     box(0.66, .055, 1.30, trim, [x, 3.287, z], scene, 0.018, false);
-    box(0.585, .028, 1.23, light, [x, 3.246, z], scene, 0.012, false);
+    box(.585, .02, 1.23, light, [x, 3.246, z], scene, .012, false);
+    box(.012, .009, 1.19, trim, [x - .14, 3.232, z], scene, 0, false);
+    box(.012, .009, 1.19, trim, [x + .14, 3.232, z], scene, 0, false);
   }
   for (const z of [-2.95, 2.95]) {
     box(0.95, .055, .95, trim, [0, 3.28, z], scene, .022, false);
     for (let j = -3; j <= 3; j++) box(.71, .014, .015, shades, [0, 3.244, z + j * .089], scene, 0, false);
   }
 
+  const security = new THREE.Group();
+  security.position.set(5.75, 3.18, -4.7);
+  security.rotation.y = -.85;
+  scene.add(security);
+  box(.058, .17, .067, steel, [0, .052, 0], security, .013, false);
+  const securityBody = box(.114, .075, .24, trim, [.012, -.04, .071], security, .021, false);
+  securityBody.rotation.x = -.17;
+  box(.064, .057, .021, black, [.012, -.024, .197], security, .013, false);
+  const lens = coat('#304349', { metalness: .28, roughness: .22 });
+  box(.026, .027, .009, lens, [.012, -.024, .209], security, .008, false);
   box(floorWidth, .14, .07, pine, [0, 2.64, room.rear + .115]);
   box(floorWidth, .067, .07, lateShelf, [0, 2.53, room.rear + .116]);
   sign('WASTEOFF MART', '캠퍼스점  ·  24 HOURS', 4.35, .65, [-2.87, 2.94, room.rear + .124], scene, '#e8ede1', '#214a3a');
@@ -126,7 +173,10 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
   }
   box(13.18, .53, .27, pine, [0, 3.04, .035], door, .02, false);
   box(13.20, .064, .284, lateShelf, [0, 2.77, .04], door, 0, false);
-  sign('WASTEOFF MART', '24 HOURS', 3.39, .46, [-.55, 3.05, .177], door, '#2a4c3e', '#e5f3d9');
+  sign('WASTEOFF MART', '24 HOURS', 3.39, .46, [-.55, 3.05, .177], door, '#294838', '#f0f5de');
+  sign('24H', 'OPEN', .75, .48, [4.62, 2.23, .076], door, '#1c352b', '#cde28c');
+  box(10.6, .073, .52, pine, [0, 2.764, .331], door, .015, false);
+  for (const x of [-4.1, -2.1, 0, 2.1, 4.1]) box(.78, .023, .123, light, [x, 2.725, .438], door, .01, false);
   box(2.10, .042, .53, steel, [0, .012, .025], door, 0, false);
   box(.30, .070, .11, black, [0, 2.65, -.12], door, .017, false);
   const sliding = [-1, 1].map(side => {
@@ -157,7 +207,61 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
     box(.49, .10, .23, steel, [x, 3.43, 9.85], scene, .02, false);
     box(.34, .022, .16, light, [x, 3.36, 9.85], scene, .01, false);
   }
-  for (let i = -4; i <= 4; i++) box(1.0, .006, .08, coat('#c9ab70'), [i * 2.66, -.136, 12.55], scene, 0, false);
+  const trafficPaint = coat('#b3a46e', { roughness: .91 });
+  for (let i = -4; i <= 4; i++) box(1.0, .006, .08, trafficPaint, [i * 2.66, -.136, 12.55], scene, 0, false);
+  const pavingPaint = coat('#b8c4c8');
+  for (let i = 0; i < 7; i++) box(.38, .005, 1.9, pavingPaint, [1.27 + i * .65, -.141, 13.9], scene, 0, false);
+  const puddle = keep(canvasMap(256, 128, ctx => {
+    const pool = ctx.createRadialGradient(128, 62, 9, 128, 62, 73);
+    pool.addColorStop(0, '#a9d5ff29');
+    pool.addColorStop(.45, '#7bb3e43b');
+    pool.addColorStop(1, '#699ac000');
+    ctx.save();
+    ctx.translate(128, 62);
+    ctx.scale(1.7, .77);
+    ctx.translate(-128, -62);
+    ctx.fillStyle = pool;
+    ctx.fillRect(-32, -80, 330, 270);
+    ctx.restore();
+  }));
+  const puddleMat = flat({ map: puddle, transparent: true, depthWrite: false });
+  for (const [x, z] of [[-4.9, 9.58], [3.6, 9.75], [1.5, 10.9]]) {
+    horizontal(3.41, 1.21, puddleMat, [x, z < 10 ? -.037 : -.143, z]);
+  }
+  const bike = new THREE.Group();
+  bike.position.set(4.52, 0, 8.71);
+  scene.add(bike);
+  const rim = coat('#acada5', { metalness: .47, roughness: .36 });
+  const framePaint = coat('#a55432', { metalness: .14, roughness: .44 });
+  const tread = coat('#252a2a', { roughness: .81 });
+  function spoke(from: P, to: P, radius = .010, material = rim) {
+    const point = new THREE.Vector3(...from);
+    const line = new THREE.Vector3(...to).sub(point);
+    const rod = put(keep(new THREE.CylinderGeometry(radius, radius, line.length(), 6)), material, [0, 0, 0], bike);
+    rod.position.copy(point).addScaledVector(line, .5);
+    rod.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), line.normalize());
+  }
+  for (const x of [-.51, .51]) {
+    put(keep(new THREE.TorusGeometry(.304, .023, 8, 36)), tread, [x, .307, 0], bike);
+    put(keep(new THREE.TorusGeometry(.279, .010, 5, 36)), rim, [x, .307, 0], bike);
+    for (let i = 0; i < 8; i++) {
+      const angle = i * Math.PI / 4;
+      spoke([x, .307, 0], [x + Math.cos(angle) * .276, .307 + Math.sin(angle) * .276, 0], .003);
+    }
+  }
+  const pedal: P = [-.08, .36, 0];
+  const seatPost: P = [-.24, .82, 0];
+  const fork: P = [.37, .79, 0];
+  spoke(pedal, seatPost, .022, framePaint);
+  spoke(pedal, fork, .023, framePaint);
+  spoke(seatPost, fork, .022, framePaint);
+  spoke(seatPost, [-.51, .307, 0], .015, framePaint);
+  spoke(pedal, [-.51, .307, 0], .014, framePaint);
+  spoke(fork, [.51, .307, 0], .019, framePaint);
+  spoke(fork, [.29, .99, 0], .015);
+  spoke([.29, .99, -.13], [.29, .99, .13], .013);
+  box(.21, .045, .088, tread, [-.26, .859, 0], bike, .02);
+
 
   const atlas = keep(new THREE.TextureLoader().load(atlasUrl, onTexturesReady, undefined, onTexturesReady));
   atlas.colorSpace = THREE.SRGBColorSpace;
@@ -184,16 +288,21 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
     const [w, h, d] = sizeFor[item.form];
     const container = coat(item.form === 'tray' ? '#343835' : item.color, { roughness: item.form === 'can' ? .33 : .57 });
     const print = coat('#ffffff', { map: mapFor(item), roughness: .59 });
-    const parts: [THREE.BufferGeometry, THREE.Material, P, number][] = [];
+    const parts: ProductPart[] = [];
 
     if (item.form === 'bottle' || item.form === 'can' || item.form === 'cup') {
       const bottle = item.form === 'bottle';
       const cup = item.form === 'cup';
-      const shell = keep(new THREE.CylinderGeometry(w * .50, w * (cup ? .35 : .50), h, 14));
+      const bottleProfile = [[0, -.50], [.44, -.50], [.49, -.47], [.50, -.36], [.50, .29],
+        [.48, .35], [.40, .39], [.27, .435], [.24, .46], [.24, .50], [0, .50]];
+      const shell = keep(bottle
+        ? new THREE.LatheGeometry(bottleProfile.map(([x, y]) => new THREE.Vector2(x * w, y * h)), 16)
+        : new THREE.CylinderGeometry(w * .50, w * (cup ? .35 : .50), h, 14));
       parts.push([shell, container, [0, 0, 0], 0]);
-      const label = keep(new THREE.CylinderGeometry(w * .507, w * (cup ? .40 : .507), h * .76, 14, 1, true, -.85, 1.70));
+      const label = keep(new THREE.CylinderGeometry(w * .507, w * (cup ? .40 : .507), h * (bottle ? .38 : .76), 14, 1, true, -.85, 1.70));
       parts.push([label, print, [0, -.01, .0008], 0]);
-      const cap = keep(new THREE.CylinderGeometry(w * (bottle ? .28 : .49), w * .49, .016, 14));
+      const capWidth = w * (bottle ? .27 : .49);
+      const cap = keep(new THREE.CylinderGeometry(capWidth, capWidth, bottle ? .020 : .016, 14));
       parts.push([cap, bottle ? steel : (cup ? container : steel), [0, h / 2 + .009, 0], 0]);
     } else if (item.form === 'wedge') {
       const shape = new THREE.Shape();
@@ -209,7 +318,7 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
       parts.push([keep(new THREE.ExtrudeGeometry(shape, { depth: d, bevelEnabled: false })), container, [0, 0, -d * .5], 0]);
       parts.push([face, print, [0, 0, d * .5 + .001], 0]);
     } else {
-      const body = keep(new RoundedBoxGeometry(w, h, d, 2, Math.min(d / 4, .023)));
+      const body = keep(new RoundedBoxGeometry(w, h, d, 1, Math.min(d / 4, .023)));
       parts.push([body, container, [0, 0, 0], 0]);
       if (stand) {
         parts.push([keep(new THREE.PlaneGeometry(w * .91, h * .90)), print, [0, 0, d / 2 + .001], 0]);
@@ -218,11 +327,15 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
       }
     }
 
+    products.set(item.sku, parts);
     const dummy = new THREE.Object3D();
     const meshes = parts.map(([geometry, material, offset, rot]) => {
       const mesh = keep(new THREE.InstancedMesh(geometry, material, shelfPositions.length));
       shelfPositions.forEach(([x, y, z], i) => {
-        dummy.position.set(x + offset[0], y + h / 2 + offset[1], z + offset[2]);
+        const scale = .95 + (i % 5) * .018;
+        const shift = i % 4 * .008 - .012;
+        dummy.position.set(x + offset[0] + shift, y + (h / 2 + offset[1]) * scale, z + offset[2] * scale + (i % 3) * .007);
+        dummy.scale.setScalar(scale);
         dummy.rotation.set(rot, 0, 0);
         dummy.updateMatrix();
         mesh.setMatrixAt(i, dummy.matrix);
@@ -270,7 +383,10 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
       for (let column = 1; column < merch.length; column++) {
         const x = (column / merch.length - .5) * (w - .15);
         box(.048, height - .31, .048, steel, [x, height / 2 - .05, d / 2 - .033], g, .008);
-        if (department.id === 'drinks') box(.043, .71, .088, steel, [x + .075, .96, d / 2 + .019], g, .014);
+        if (department.id === 'drinks') {
+          box(.034, .62, .072, steel, [x + .075, 1.04, d / 2 + .038], g, .014);
+          box(.042, .058, .05, black, [x + .075, 1.38, d / 2 + .016], g, .009);
+        }
       }
       for (const x of [-w / 2 + .14, w / 2 - .14]) {
         box(.032, height - .43, .039, light, [x, height / 2 - .08, d / 2 - .081], g, 0, false);
@@ -323,6 +439,15 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
     }
   }
 
+  for (const [x, title, subtitle] of [[-2.21, '← SELF SERVICE', '셀프 코너'], [2.16, 'CHECKOUT →', '계산대']] as const) {
+    const structure = new THREE.Group();
+    structure.position.set(x, 2.72, 1.08);
+    scene.add(structure);
+    box(1.32, .263, .063, pine, [0, 0, 0], structure, .017, false);
+    for (const offset of [-.49, .49]) box(.012, .472, .012, steel, [offset, .369, 0], structure, 0, false);
+    sign(title, subtitle, 1.23, .218, [0, 0, .035], structure, '#264b3c', '#edf4dc');
+  }
+
   const notices = [
     { sku: 'ramen', x: room.left + .054, z: 1.31, rotation: Math.PI / 2, title: 'HOT MEAL', subtitle: '따뜻한 간편식' },
     { sku: 'lime', x: room.right - .054, z: -1.52, rotation: -Math.PI / 2, title: 'COLD & FRESH', subtitle: '냉장 음료 코너' },
@@ -345,8 +470,8 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
   box(.119, .035, .081, black, [.239, 1.021, .086], backDoor, .011, false);
   sign('STAFF ONLY', '직원 전용', .60, .175, [0, 1.55, .051], backDoor, '#e9e9e0', '#303d32');
 
-  const wood = coat('#8b745a', { roughness: .7 });
-  const counterTop = coat('#555d56', { roughness: .37 });
+  const wood = coat('#a18a72', { map: surface('wood'), roughness: .54 });
+  const counterTop = coat('#68746c', { map: surface('steel'), roughness: .39, metalness: .21 });
   const till = new THREE.Group();
   till.position.set(counter.x, 0, counter.z);
   scene.add(till);
@@ -360,10 +485,35 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
   box(.41, .095, .31, black, [-.58, 1.20, .08], till, .028);
   box(.075, .20, .086, black, [-.58, 1.32, .09], till, .017);
   box(.64, .417, .115, black, [-.58, 1.54, .092], till, .035);
-  const posScreen = sign('WELCOME', 'SCAN YOUR ITEMS', .555, .327, [-.58, 1.545, .027], till, '#1b3027', '#c8e3a4');
+  const terminal = keep(canvasMap(512, 285, () => undefined));
+  const posScreen = panel(.555, .327, flat({ map: terminal }), [-.58, 1.545, .027], till);
   posScreen.rotation.y = Math.PI;
+  const terminalPainter = (terminal.image as HTMLCanvasElement).getContext('2d')!;
+  let lastDisplay = '';
+  function setRegister(scanned: number, count: number, charge: number) {
+    const display = [scanned, count, charge].join('/');
+    if (display === lastDisplay) return;
+    lastDisplay = display;
+    const ctx = terminalPainter;
+    ctx.fillStyle = '#172c26';
+    ctx.fillRect(0, 0, 512, 285);
+    ctx.fillStyle = '#aac38c';
+    ctx.font = '700 29px system-ui, sans-serif';
+    ctx.fillText('WASTEOFF  /  POS 01', 28, 47);
+    ctx.fillStyle = '#e0f4b9';
+    ctx.font = '800 58px system-ui, sans-serif';
+    ctx.fillText(count ? scanned + ' / ' + count : 'OPEN', 29, 132);
+    ctx.fillStyle = '#c5e489';
+    ctx.font = '730 43px system-ui, sans-serif';
+    ctx.fillText(count ? charge.toLocaleString('ko-KR') + ' KRW' : 'SCAN TO START', 29, 222);
+    terminal.needsUpdate = true;
+  }
+  setRegister(0, 0, 0);
   box(.21, .082, .26, black, [.43, 1.196, -.173], till, .026);
-  box(.158, .010, .175, coat('#233c36', { emissive: '#427764', emissiveIntensity: .29 }), [.43, 1.241, -.182], till, .016);
+  box(.146, .010, .095, coat('#273b35', { emissive: '#436b54', emissiveIntensity: .33 }), [.43, 1.241, -.207], till, .014);
+  for (let row = 0; row < 3; row++) for (let col = 0; col < 3; col++) {
+    box(.022, .011, .019, row === 2 && col === 2 ? green : steel, [.396 + col * .036, 1.242, -.132 + row * .027], till, .004);
+  }
   box(.36, .035, .27, steel, [.95, 1.172, -.071], till, .018);
   const scan = coat('#712013', { emissive: '#e84c31', emissiveIntensity: .75 });
   box(.23, .008, .014, scan, [.95, 1.194, -.073], till, .006, false);
@@ -375,14 +525,31 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
   clerk.object.position.set(4.87, 0, 4.93);
   scene.add(clerk.object);
 
-  // Microwave and coffee station, basket stand and seating by the windows.
+  // Service counter, vented microwave doors and an insulated water dispenser.
   box(.78, .91, 2.17, pine, [-5.89, .46, 3.42], scene, .04);
   box(.91, .075, 2.26, counterTop, [-5.89, .95, 3.42], scene, .025);
-  for (const z of [2.87, 3.51, 4.09]) {
-    box(.51, .35, .47, steel, [-5.90, 1.166, z], scene, .025);
-    box(.041, .215, .34, black, [-5.626, 1.166, z], scene, .017);
-    box(.04, .160, .055, trim, [-5.596, 1.174, z - .12], scene, .012);
+  const vent = keep(canvasMap(128, 128, ctx => {
+    ctx.fillStyle = '#303c39';
+    ctx.fillRect(0, 0, 128, 128);
+    ctx.fillStyle = '#72817a';
+    for (let y = 5; y < 126; y += 7) for (let x = 5; x < 126; x += 7) ctx.fillRect(x, y, 2, 2);
+  }));
+  for (const z of [2.79, 3.38]) {
+    box(.51, .35, .49, steel, [-5.90, 1.166, z], scene, .025);
+    box(.041, .227, .345, black, [-5.626, 1.166, z + .037], scene, .017);
+    const mesh = panel(.242, .176, flat({ map: vent }), [-5.603, 1.166, z + .058]);
+    mesh.rotation.y = Math.PI / 2;
+    box(.049, .159, .028, steel, [-5.585, 1.165, z - .096], scene, .012);
+    box(.014, .056, .084, green, [-5.626, 1.255, z - .189], scene, .006);
   }
+  box(.49, .48, .46, steel, [-5.90, 1.227, 4.12], scene, .03);
+  box(.218, .053, .28, black, [-5.632, 1.021, 4.12], scene, .019);
+  box(.091, .093, .071, black, [-5.628, 1.232, 4.12], scene, .022);
+  box(.008, .053, .089, lateShelf, [-5.648, 1.382, 4.12], scene, .006);
+  const station = new THREE.Group();
+  station.position.set(service.x, 0, service.z);
+  scene.add(station);
+  fixtureTarget(service.width + .08, 1.48, service.depth, .76, 0, { type: 'area', id: 'service' }, station);
   const self = sign('셀프 코너', 'HEAT & EAT', 1.73, .39, [-6.474, 1.83, 3.46], scene, '#e9eee0', '#2d513e');
   self.rotation.y = Math.PI / 2;
   box(2.18, .083, .64, wood, [-4.60, .97, 5.8], scene, .026);
@@ -393,7 +560,13 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
     put(keep(new THREE.CylinderGeometry(.042, .07, .54, 12)), steel, [x, .28, 5.68]);
   }
   box(.68, .72, .56, pine, [5.65, .37, 5.91], scene, .033);
-  for (let i = 0; i < 5; i++) box(.68, .05, .56, i % 2 ? green : pine, [5.65, .74 + i * .045, 5.91], scene, .017);
+  for (let i = 0; i < 3; i++) {
+    const basket = makeBasket(keep);
+    basket.position.set(5.65, .83 + i * .053, 5.91);
+    basket.scale.setScalar(1.60);
+    basket.rotation.y = .18;
+    scene.add(basket);
+  }
   box(1.7, .07, .40, wood, [-3.4, .47, 8.49], scene, .017);
   box(1.7, .19, .065, wood, [-3.4, .71, 8.70], scene, .012);
   for (const x of [-4.10, -2.70]) box(.076, .47, .33, black, [x, .22, 8.49]);
@@ -408,11 +581,59 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
   const playerShadow = horizontal(.88, .85, flat({ map: shadow, transparent: true, depthWrite: false }), [0, .008, 0]);
   const player = makeAvatar(keep);
   scene.add(player.object);
+  const heldBasket = makeBasket(keep, true);
+  const basketContents = [heldBasket, player.basket].map(basket => {
+    const group = new THREE.Group();
+    basket.add(group);
+    return group;
+  });
+  let basketSignature = '';
+
+  function setBasket(basket: Record<string, number>) {
+    const selected = items.flatMap(item => Array<Item>(Math.min(2, basket[item.sku] ?? 0)).fill(item)).slice(0, 2);
+    const signature = selected.map(item => item.sku).join('/');
+    if (signature === basketSignature) return;
+    basketSignature = signature;
+    for (const contents of basketContents) {
+      contents.clear();
+      selected.forEach((item, index) => {
+        const product = new THREE.Group();
+        contents.add(product);
+        for (const [geometry, material, offset, rotation] of products.get(item.sku) ?? []) {
+          put(geometry, material, offset, product).rotation.x = rotation;
+        }
+        const [width, height] = sizeFor[item.form];
+        const scale = Math.min(.75, .156 / width);
+        product.scale.setScalar(scale);
+        product.position.set(selected.length === 1 ? 0 : (index === 0 ? -.082 : .074), -.111 + height * scale / 2, index * .035 - .020);
+        product.rotation.y = index ? -.15 : .09;
+      });
+    }
+  }
+
+  const border = new THREE.BoxHelper(targets[0], '#d6ed9b');
+  keep(border.geometry);
+  const outline = keep(border.material as THREE.LineBasicMaterial);
+  outline.transparent = true;
+  outline.opacity = .66;
+  outline.depthWrite = false;
+  border.visible = false;
+  scene.add(border);
 
   return {
     player,
     playerShadow,
+    heldBasket,
     targets,
+    setRegister,
+    setBasket,
+    highlight(target: Target | null) {
+      const mesh = target?.type === 'item'
+        ? targets.find(node => node.userData.target?.sku === target.sku)
+        : undefined;
+      border.visible = !!mesh;
+      if (mesh) border.setFromObject(mesh);
+    },
     setDoor(open: number) {
       sliding.forEach((pane, index) => { pane.position.x = (index ? 1 : -1) * (.535 + 1.014 * open); });
     },

@@ -6,14 +6,13 @@ export function makeAvatar(keep: <T extends { dispose(): void }>(resource: T) =>
   const material = (color: string) => keep(new THREE.MeshStandardMaterial({ color, roughness: 0.78 }));
   const coat = material(clerk ? '#526547' : '#53667e');
   const cuff = material(clerk ? '#263d2b' : '#28394a');
+  const seam = material(clerk ? '#637557' : '#5e728a');
   const trousers = material('#323a40');
   const shoes = material('#293635');
   const sole = material('#d6d8cd');
   const hair = material('#312c29');
   const skin = material('#c49373');
   const white = material('#dfe8dd');
-  const green = material('#36604b');
-  const inner = material('#183126');
 
   function box(w: number, h: number, d: number, material: THREE.Material, x: number, y: number, z: number,
     parent = group, rounding = 0.035) {
@@ -55,10 +54,11 @@ export function makeAvatar(keep: <T extends { dispose(): void }>(resource: T) =>
   group.add(torso);
   cylinder(.15, .131, .045, cuff, [0, .958, 0], group, .86);
   cylinder(.070, .078, .115, skin, [0, 1.477, -.007]);
-  ellipsoid(.129, [.94, .43, .71], cuff, [0, 1.394, .103]);
-  box(.26, .017, .009, cuff, 0, 1.14, .135, group, .004);
+  ellipsoid(.115, [1.03, .59, .56], coat, [0, 1.385, .079]);
+  box(.25, .011, .01, seam, 0, 1.275, .134, group, .004);
   box(.099, .065, .011, cuff, -.123, 1.13, -.115, group, .010);
-  box(0.072, 0.083, 0.013, white, 0.115, 1.32, -0.143, group, 0.010);
+  if (clerk) box(.071, .040, .013, white, .115, 1.32, -.140, group, .010);
+  else box(.014, .23, .009, seam, 0, 1.09, -.128, group, .004);
   const head = new THREE.Mesh(keep(new THREE.SphereGeometry(0.135, 18, 14)), skin);
   head.position.set(0, 1.61, -0.017);
   head.scale.set(0.81, 1.05, 0.88);
@@ -73,43 +73,86 @@ export function makeAvatar(keep: <T extends { dispose(): void }>(resource: T) =>
   const legs = [-1, 1].map(side => {
     const joint = limb(side * 0.107, 0.92);
     cylinder(.090, .070, .407, trousers, [0, -.221, 0], joint, 1.18);
-    cylinder(.072, .062, .372, trousers, [0, -.602, .009], joint, 1.19);
-    ellipsoid(.071, [1, .91, 1.18], trousers, [0, -.423, .002], joint);
-    box(0.176, 0.123, 0.29, shoes, 0, -0.833, -0.049, joint);
-    box(0.174, 0.036, 0.291, sole, 0, -0.894, -0.049, joint, 0.013);
-    return joint;
+    const knee = new THREE.Group();
+    knee.position.set(0, -.423, 0);
+    joint.add(knee);
+    cylinder(.072, .062, .372, trousers, [0, -.179, .009], knee, 1.19);
+    ellipsoid(.071, [1, .91, 1.18], trousers, [0, 0, .002], knee);
+    box(.166, .121, .278, shoes, 0, -.406, -.053, knee);
+    box(.169, .035, .285, sole, 0, -.466, -.053, knee, .013);
+    for (const z of [-.055, -.083, -.111]) box(.067, .009, .009, sole, 0, -.342, z, knee, .003);
+    return { joint, knee };
   });
   const arms = [-1, 1].map(side => {
-    const joint = limb(side * 0.265, 1.385);
+    const joint = limb(side * .222, 1.354);
     joint.rotation.z = side * 0.085;
-    ellipsoid(.079, [1, 1.12, 1.07], coat, [0, -.043, 0], joint);
-    cylinder(.076, .067, .222, coat, [0, -.152, 0], joint, 1.1);
-    cylinder(.068, .058, .21, coat, [0, -.348, .004], joint, 1.12);
-    cylinder(.061, .056, .045, cuff, [0, -.464, .008], joint, 1.12);
-    ellipsoid(.064, [.64, 1.08, .69], skin, [0, -.526, -.012], joint);
+    const silhouette = [[0, -.45], [.052, -.45], [.061, -.395], [.061, -.302], [.065, -.231],
+      [.072, -.128], [.078, -.038], [.071, .019], [.050, .048], [0, .056]];
+    const sleeve = new THREE.Mesh(keep(new THREE.LatheGeometry(silhouette.map(([x, y]) => new THREE.Vector2(x, y)), 18)), coat);
+    sleeve.scale.z = 1.11;
+    joint.add(sleeve);
+    cylinder(.058, .053, .041, cuff, [0, -.455, .004], joint, 1.12);
+    ellipsoid(.056, [.64, 1.08, .69], skin, [0, -.508, -.008], joint);
     return joint;
   });
-  const basket = new THREE.Group();
-  const handle = new THREE.Mesh(keep(new THREE.TorusGeometry(0.147, 0.014, 6, 24, Math.PI)), inner);
-  basket.add(handle);
-  box(0.34, 0.126, 0.25, inner, 0, -0.05, 0, basket, 0.024);
-  box(0.345, 0.056, 0.257, green, 0, -0.007, 0, basket, 0.014);
-  for (const side of [-1, 1]) {
-    for (let i = 0; i < 5; i++) box(0.017, 0.059, 0.013, green, -0.123 + i * 0.061, -0.075, side * 0.128, basket, 0.004);
-  }
-  basket.position.set(0.034, -0.691, -0.041);
+  const basket = makeBasket(keep);
+  basket.position.set(.062, -.660, -.026);
   arms[1].add(basket);
   basket.visible = false;
 
   return {
     object: group,
-    pose(phase: number, walking: number, carrying: boolean) {
-      const swing = Math.sin(phase) * 0.48 * walking;
-      legs[0].rotation.x = swing;
-      legs[1].rotation.x = -swing;
-      arms[0].rotation.x = -swing * 0.52;
-      arms[1].rotation.x = carrying ? -0.25 : swing * 0.52;
+    basket,
+    pose(phase: number, intensity: number, carrying: boolean, reduceMotion = false) {
+      const strength = intensity * (reduceMotion ? .42 : 1);
+      const swing = Math.sin(phase) * .43 * strength;
+      legs[0].joint.rotation.x = swing;
+      legs[1].joint.rotation.x = -swing;
+      legs[0].knee.rotation.x = -Math.max(0, -Math.sin(phase - .62)) * strength * .60;
+      legs[1].knee.rotation.x = -Math.max(0, Math.sin(phase - .62)) * strength * .60;
+      arms[0].rotation.x = -swing * .57;
+      arms[1].rotation.x = carrying ? -.23 + swing * .18 : swing * .57;
       basket.visible = carrying;
     },
   };
+}
+
+export function makeBasket(keep: <T extends { dispose(): void }>(resource: T) => T, handheld = false) {
+  const basket = new THREE.Group();
+  const plastic = keep(new THREE.MeshStandardMaterial({ color: '#426a49', roughness: .48, metalness: .06 }));
+  const dark = keep(new THREE.MeshStandardMaterial({ color: '#244735', roughness: .53 }));
+  function bars(w: number, h: number, depth: number, positions: [number, number, number][], material = plastic) {
+    const geometry = keep(new RoundedBoxGeometry(w, h, depth, 1, .008));
+    const mesh = keep(new THREE.InstancedMesh(geometry, material, positions.length));
+    const transform = new THREE.Matrix4();
+    positions.forEach(([x, y, z], index) => mesh.setMatrixAt(index, transform.makeTranslation(x, y, z)));
+    basket.add(mesh);
+  }
+  bars(.318, .027, .228, [[0, -.125, 0]], dark);
+  bars(.362, .026, .023, [[0, -.016, -.123], [0, -.016, .123]]);
+  bars(.326, .021, .019, [[0, -.111, -.108], [0, -.111, .108]]);
+  bars(.021, .025, .264, [[-.169, -.016, 0], [.169, -.016, 0]]);
+  bars(.021, .025, .225, [[-.153, -.111, 0], [.153, -.111, 0]]);
+  bars(.016, .103, .014, [-.116, .116].flatMap(z =>
+    Array.from({ length: 8 }, (_, i) => [(i - 3.5) * .043, -.066, z] as [number, number, number])));
+  bars(.014, .10, .016, [-.164, .164].flatMap(x =>
+    Array.from({ length: 5 }, (_, i) => [x, -.067, (i - 2) * .048] as [number, number, number])));
+  const handle = new THREE.Mesh(keep(new THREE.TorusGeometry(.148, .012, 7, 24, Math.PI)), dark);
+  handle.position.y = -.006;
+  basket.add(handle);
+  if (handheld) {
+    const skin = keep(new THREE.MeshStandardMaterial({ color: '#b98a6c', roughness: .69 }));
+    const sleeve = keep(new THREE.MeshStandardMaterial({ color: '#34485c', roughness: .81 }));
+    const arm = new THREE.Mesh(keep(new THREE.CapsuleGeometry(.048, .20, 5, 10)), sleeve);
+    arm.rotation.z = -.79;
+    arm.rotation.x = .36;
+    arm.position.set(.123, .101, .16);
+    basket.add(arm);
+    const fist = new THREE.Mesh(keep(new THREE.SphereGeometry(.048, 13, 10)), skin);
+    fist.scale.set(.86, .77, 1.11);
+    fist.position.set(.056, .120, .030);
+    basket.add(fist);
+    basket.rotation.y = -.24;
+  }
+  return basket;
 }

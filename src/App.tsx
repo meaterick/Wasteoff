@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight, ArrowUpRight, BarChart3, BottleWine, ChevronRight, Clock3, DoorOpen, Flame, Leaf, LogIn, LogOut,
-  Minus, Package, ScanLine, ShoppingBasket, Snowflake, Store as StoreIcon, Wallet,
+  Microwave, Minus, Package, ScanLine, ShoppingBasket, Snowflake, Store as StoreIcon, Wallet,
 } from 'lucide-react';
 import { departments, getItem, items, type Department, type Destination, type Item } from './catalog';
 import {
@@ -11,7 +11,8 @@ import {
 import { applyParticipantAction, restoreSignIn, signOut, type SignIn } from './participants';
 import { Results } from './Results';
 import { SignInDialog } from './SignInDialog';
-import { ItemDialog, Packaging, PosDialog, ShelfDialog } from './StoreDialogs';
+import { ItemDialog, Packaging, PosDialog, ServiceDialog, ShelfDialog } from './StoreDialogs';
+import { useStoreSound } from './storeSound';
 import type { Navigation } from './WalkStage';
 import type { CameraMode } from './market/view';
 import type { Target } from './market/world';
@@ -20,7 +21,7 @@ const WalkStage = lazy(() => import('./WalkStage'));
 const guest = newStore('typical');
 const departmentIcon = { fresh: Snowflake, rescue: Leaf, snacks: Package, noodles: Flame, drinks: BottleWine, freezer: Snowflake };
 
-type Panel = { kind: 'shelf'; department: Department } | { kind: 'item'; item: Item } | { kind: 'pos' };
+type Panel = { kind: 'shelf'; department: Department } | { kind: 'item'; item: Item } | { kind: 'pos' } | { kind: 'service' };
 
 export default function App() {
   const [account, setAccount] = useState<SignIn>();
@@ -35,13 +36,14 @@ export default function App() {
   const operations = useRef<Promise<unknown>>(Promise.resolve());
   const leaving = useRef(false);
   const stage = useRef<HTMLElement>(null);
+  const sound = useStoreSound();
   const store = account?.store ?? guest;
+  const { basket, preparation: cooking } = useMemo(() => registerState(store), [store]);
   const totals = registerTotals(store);
   const clock = times[store.step];
-  const inventory = useMemo(() => {
-    const { basket } = registerState(store);
-    return Object.fromEntries(items.map(item => [item.sku, Math.max(0, shelfStock(store, item) - (basket[item.sku] ?? 0))]));
-  }, [store]);
+  const inventory = useMemo(() => Object.fromEntries(
+    items.map(item => [item.sku, Math.max(0, shelfStock(store, item) - (basket[item.sku] ?? 0))]),
+  ), [store, basket]);
 
   useEffect(() => {
     let active = true;
@@ -83,7 +85,13 @@ export default function App() {
           setAuth('signIn');
           return false;
         }
-        if (action.type === 'basket-add' && result.changed) notify(getItem(action.sku)?.name + '을(를) 담았어요.');
+        if (result.changed && action.type === 'basket-add') {
+          notify(getItem(action.sku)?.name + '을(를) 담았어요.');
+          sound.play('bag');
+        } else if (result.changed && action.type === 'service-finish') {
+          notify('셀프 코너에서 상품 준비를 마쳤어요.');
+          sound.play('ready');
+        }
         return result.changed;
       } catch {
         notify('변경을 저장하지 못했어요. 다시 시도해 주세요.');
@@ -93,6 +101,13 @@ export default function App() {
     operations.current = operation;
     return operation;
   }
+
+  useEffect(() => {
+    if (!account || !cooking) return;
+    const timer = window.setTimeout(() => void act({ type: 'service-finish', now: Date.now() }),
+      Math.max(0, cooking.ends - Date.now()) + 25);
+    return () => window.clearTimeout(timer);
+  }, [account?.id, cooking?.started, cooking?.ends, sound.play]);
 
   async function exit() {
     if (leaving.current) return;
@@ -124,6 +139,7 @@ export default function App() {
   function visit(destination: Destination) {
     go(destination);
     if (destination === 'register') setPanel({ kind: 'pos' });
+    else if (destination === 'service') setPanel({ kind: 'service' });
     else if (destination !== 'entrance') setPanel({ kind: 'shelf', department: destination });
   }
 
@@ -133,6 +149,8 @@ export default function App() {
       if (item) setPanel({ kind: 'item', item });
     } else if (target.id === 'register') {
       setPanel({ kind: 'pos' });
+    } else if (target.id === 'service') {
+      setPanel({ kind: 'service' });
     } else if (target.id !== 'entrance') {
       setPanel({ kind: 'shelf', department: target.id });
     }
@@ -183,7 +201,9 @@ export default function App() {
           <section className="viewport" aria-label="3D 편의점" ref={stage}>
             <Suspense fallback={<div className="walk-stage scene-unavailable" role="status"><StoreIcon size={26} /> 매장에 입장하는 중…</div>}>
               <WalkStage mode={mode} onMode={setMode} onInspect={inspect} inventory={inventory}
-                carrying={totals.count > 0} clock={clock} paused={!showShop || !!panel || !!auth} navigation={navigation} />
+                basket={basket} clock={clock} paused={!showShop || !!panel || !!auth} navigation={navigation}
+                sound={sound.enabled} onSound={() => void sound.toggle()} onCue={sound.play}
+                scanned={totals.scanCount} count={totals.count} charge={totals.charged} />
             </Suspense>
           </section>
 
@@ -200,6 +220,9 @@ export default function App() {
                   </button>;
                 })}
               </div>
+              <button type="button" className="service-shortcut" onClick={() => visit('service')}>
+                <Microwave size={17} aria-hidden="true" /><span>셀프 코너</span><small>{cooking ? '준비 중' : '전자레인지 · 온수'}</small><ChevronRight size={15} aria-hidden="true" />
+              </button>
             </section>
             <section className="rail-section basket-panel" aria-labelledby="basket-heading">
               <div className="rail-title"><ShoppingBasket size={18} aria-hidden="true" /><h2 id="basket-heading">장바구니</h2><span className="count-badge">{totals.count}</span></div>
@@ -252,7 +275,9 @@ export default function App() {
         onInspect={item => setPanel({ kind: 'item', item })} />}
       {panel?.kind === 'item' && <ItemDialog item={panel.item} store={store} onClose={closePanel} onAdd={add}
         onBack={() => setPanel({ kind: 'shelf', department: panel.item.department })} />}
-      {panel?.kind === 'pos' && <PosDialog store={store} onAction={act} signedIn={!!account} onClose={closePanel} onLogin={() => setAuth('create')} />}
+      {panel?.kind === 'pos' && <PosDialog store={store} onAction={act} signedIn={!!account}
+        onClose={closePanel} onLogin={() => setAuth('create')} onCue={sound.play} />}
+      {panel?.kind === 'service' && <ServiceDialog store={store} onAction={act} onClose={closePanel} />}
       {auth && <SignInDialog create={auth === 'create'} onClose={() => setAuth(undefined)}
         onSignIn={signedIn => { setAccount(signedIn); setAuth(undefined); notify(signedIn.name + '님으로 입장했어요.'); }} />}
       <span className={'notice' + (notice ? ' notice--shown' : '')} role="status">{notice}</span>

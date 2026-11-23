@@ -29,8 +29,10 @@ export const departments = [
 ] as const;
 
 export type Department = (typeof departments)[number]['id'];
-export type Destination = Department | 'register' | 'entrance';
+export type Destination = Department | 'register' | 'entrance' | 'service';
 export type Package = 'tray' | 'wedge' | 'roll' | 'cup' | 'bag' | 'bar' | 'bottle' | 'can' | 'carton';
+
+export type Preparation = 'microwave' | 'hot-water';
 
 export type Item = {
   sku: string;
@@ -46,11 +48,12 @@ export type Item = {
   barcode: string;
   date: string;
   rescue?: ProductId;
-  offer?: '2+1';
+  offer?: '1+1' | '2+1';
+  preparation?: Preparation;
 };
 
 const packages = [
-  { form: 'tray', size: '410 g' },
+  { form: 'tray', size: '410 g', preparation: 'microwave' },
   { form: 'wedge', size: '190 g' },
   { form: 'wedge', size: '110 g' },
   { form: 'roll', size: '250 g' },
@@ -65,17 +68,17 @@ const chilled: Omit<Item, 'barcode'>[] = products.flatMap((product, index) => {
 });
 
 const dry: Omit<Item, 'barcode'>[] = [
-  { sku: 'ramen', name: '얼큰 컵라면', label: 'HOT RAMYEON', department: 'noodles', form: 'cup', color: '#d34a40', art: 4, price: 1800, stock: 38, size: '110 g', date: '상온 보관' },
-  { sku: 'udon', name: '가쓰오 우동', label: 'KATSUO UDON', department: 'noodles', form: 'cup', color: '#d7ac59', art: -1, price: 2300, stock: 30, size: '128 g', date: '상온 보관' },
+  { sku: 'ramen', preparation: 'hot-water', name: '얼큰 컵라면', label: 'HOT RAMYEON', department: 'noodles', form: 'cup', color: '#d34a40', art: 4, price: 1800, stock: 38, size: '110 g', date: '상온 보관' },
+  { sku: 'udon', preparation: 'hot-water', name: '가쓰오 우동', label: 'KATSUO UDON', department: 'noodles', form: 'cup', color: '#d7ac59', art: -1, price: 2300, stock: 30, size: '128 g', date: '상온 보관' },
   { sku: 'chips', name: '허니 감자칩', label: 'HONEY CHIPS', department: 'snacks', form: 'bag', color: '#77a5cb', art: 5, price: 1700, stock: 28, size: '60 g', date: '상온 보관' },
   { sku: 'cookies', name: '초코칩 쿠키', label: 'CHOCO COOKIE', department: 'snacks', form: 'bag', color: '#815244', art: 6, price: 1900, stock: 30, size: '120 g', date: '상온 보관' },
-  { sku: 'rice', name: '즉석 백미밥', label: 'STEAMED RICE', department: 'noodles', form: 'cup', color: '#c6a877', art: -1, price: 2100, stock: 20, size: '210 g', date: '상온 보관' },
+  { sku: 'rice', preparation: 'microwave', name: '즉석 백미밥', label: 'STEAMED RICE', department: 'noodles', form: 'cup', color: '#c6a877', art: -1, price: 2100, stock: 20, size: '210 g', date: '상온 보관' },
   { sku: 'cracker', name: '치즈 크래커', label: 'CHEESE CRACKER', department: 'snacks', form: 'bag', color: '#c49a59', art: -1, price: 1600, stock: 22, size: '66 g', date: '상온 보관' },
   { sku: 'cream', name: '복숭아 요거트바', label: 'PEACH YOGURT', department: 'freezer', form: 'bar', color: '#f4b88a', art: 7, price: 1700, stock: 28, size: '70 ml', date: '냉동 보관' },
   { sku: 'water', name: '맑은샘 생수', label: 'SPRING WATER', department: 'drinks', form: 'bottle', color: '#8eb9c5', art: 8, price: 900, stock: 24, size: '500 ml', date: '냉장 보관', offer: '2+1' },
   { sku: 'lime', name: '라임 탄산수', label: 'LIME SODA', department: 'drinks', form: 'can', color: '#517d62', art: 9, price: 1600, stock: 28, size: '355 ml', date: '냉장 보관' },
   { sku: 'latte', name: '카페라테', label: 'CAFE LATTE', department: 'drinks', form: 'carton', color: '#ad8362', art: 10, price: 2200, stock: 25, size: '300 ml', date: '냉장 보관' },
-  { sku: 'grape', name: '청포도 스파클링', label: 'GRAPE FIZZ', department: 'drinks', form: 'can', color: '#896bb9', art: 11, price: 1600, stock: 28, size: '355 ml', date: '냉장 보관' },
+  { sku: 'grape', offer: '1+1', name: '청포도 스파클링', label: 'GRAPE FIZZ', department: 'drinks', form: 'can', color: '#896bb9', art: 11, price: 1600, stock: 28, size: '355 ml', date: '냉장 보관' },
 ];
 
 function ean12(index: number) {
