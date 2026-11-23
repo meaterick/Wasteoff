@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Box, Camera, ChevronRight, Crosshair, Hand, Keyboard, Map,
-  Mouse, Settings2, Store as StoreIcon, UserRound, Volume2, VolumeX,
+  Maximize2, Minimize2, Mouse, Search, Settings2, Store as StoreIcon, UserRound, Volume2, VolumeX,
 } from 'lucide-react';
-import { getItem, type Destination } from './catalog';
+import { getItem, type Destination, type Preparation } from './catalog';
 import { won } from './model';
 import type { StoreCue } from './storeSound';
 import { counter, destinations, fixtures, room, service, type Pose } from './market/layout';
+import type { RenderMode } from './market/quality';
 import { aimLabel, mountWorld, type CameraMode, type Movement, type ViewPreferences } from './market/view';
 import type { Target } from './market/world';
 
@@ -25,6 +26,8 @@ type Props = {
   scanned: number;
   count: number;
   charge: number;
+  preparation?: Preparation;
+  onSearch: () => void;
   navigation?: Navigation;
 };
 const pad = [
@@ -36,13 +39,14 @@ const pad = [
 
 const controlsPreferenceKey = 'wasteoff-controls';
 function loadPreferences(): ViewPreferences {
-  const defaults = { sensitivity: 1, fov: 62, reduceMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches };
+  const defaults: ViewPreferences = { sensitivity: 1, fov: 62, reduceMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches, graphics: 'auto' };
   try {
     const data = JSON.parse(localStorage.getItem(controlsPreferenceKey) ?? 'null') as Partial<ViewPreferences> | null;
     return {
       sensitivity: typeof data?.sensitivity === 'number' && data.sensitivity >= .45 && data.sensitivity <= 1.8 ? data.sensitivity : defaults.sensitivity,
       fov: typeof data?.fov === 'number' && data.fov >= 54 && data.fov <= 76 ? data.fov : defaults.fov,
       reduceMotion: typeof data?.reduceMotion === 'boolean' ? data.reduceMotion : defaults.reduceMotion,
+      graphics: data?.graphics === 'smooth' || data?.graphics === 'detail' ? data.graphics : defaults.graphics,
     };
   } catch {
     return defaults;
@@ -112,7 +116,7 @@ const mapPercent = {
 };
 
 export default function WalkStage({
-  mode, onMode, onInspect, inventory, basket, clock, paused, navigation, sound, onSound, onCue, scanned, count, charge,
+  mode, onMode, onInspect, inventory, basket, clock, paused, navigation, sound, onSound, onCue, scanned, count, charge, preparation, onSearch,
 }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
@@ -128,6 +132,7 @@ export default function WalkStage({
   const [help, setHelp] = useState(false);
   const [showMap, setShowMap] = useState(false);
   const [locked, setLocked] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [preferences, setPreferences] = useState(loadPreferences);
 
   useEffect(() => { inspect.current = onInspect; }, [onInspect]);
@@ -166,6 +171,7 @@ export default function WalkStage({
   useEffect(() => { world.current?.changeCamera(mode); }, [mode]);
   useEffect(() => { world.current?.setInventory(inventory, basket); }, [inventory, basket]);
   useEffect(() => { world.current?.setRegister(scanned, count, charge); }, [scanned, count, charge]);
+  useEffect(() => { world.current?.setPreparation(preparation); }, [preparation]);
   useEffect(() => { world.current?.setPaused(paused || help); }, [paused, help]);
   useEffect(() => {
     world.current?.setPreferences(preferences);
@@ -174,6 +180,21 @@ export default function WalkStage({
   useEffect(() => {
     if (navigation) world.current?.go(navigation.destination);
   }, [navigation]);
+  useEffect(() => {
+    if (!expanded) return;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = overflow; };
+  }, [expanded]);
+  useEffect(() => {
+    if (!expanded || paused || locked || help) return;
+    function escape(event: KeyboardEvent) {
+      if (event.key === 'Escape' && !event.defaultPrevented) setExpanded(false);
+    }
+    window.addEventListener('keydown', escape);
+    return () => window.removeEventListener('keydown', escape);
+  }, [expanded, paused, locked, help]);
+  useEffect(() => { if (failed) setExpanded(false); }, [failed]);
 
   function focus() {
     canvas.current?.focus({ preventScroll: true });
@@ -183,9 +204,12 @@ export default function WalkStage({
   const item = aim?.type === 'item' ? getItem(aim.sku) : undefined;
   const targetStock = item ? inventory[item.sku] ?? 0 : 0;
   const SoundIcon = sound ? Volume2 : VolumeX;
+  const ScreenIcon = expanded ? Minimize2 : Maximize2;
+  const screenLabel = expanded ? '전체 화면 닫기' : '전체 화면';
 
   return (
-    <div className="walk-stage" ref={viewport} data-camera={mode} data-ready={ready}>
+    <div className={'walk-stage' + (expanded ? ' walk-stage--expanded' : '')} ref={viewport}
+      data-camera={mode} data-ready={ready} data-graphics={preferences.graphics}>
       <canvas className="walk-canvas" tabIndex={failed ? -1 : 0} ref={canvas} hidden={failed}
         aria-label="3D 매장. WASD로 이동하고 E로 상품이나 계산대를 열어요." />
       <div className="scene-head">
@@ -242,6 +266,9 @@ export default function WalkStage({
                 aria-pressed={locked} title="마우스 고정 · Esc로 해제" aria-label="마우스 고정"><Crosshair size={17} /></button>
               <button type="button" aria-pressed={sound} onClick={onSound} title="매장 소리" aria-label="매장 소리"><SoundIcon size={17} /></button>
               <button type="button" aria-expanded={showMap} onClick={() => setShowMap(!showMap)} title="매장 지도" aria-label="매장 지도"><Map size={17} /></button>
+              {expanded && <button type="button" onClick={onSearch} title="상품 검색" aria-label="전체 화면에서 상품 검색"><Search size={17} /></button>}
+              <button type="button" onClick={() => { setExpanded(!expanded); focus(); }} disabled={!ready}
+                aria-pressed={expanded} title={screenLabel} aria-label={screenLabel}><ScreenIcon size={17} /></button>
               <button type="button" aria-expanded={help} onClick={() => setHelp(!help)}><Settings2 size={16} /> 조작</button>
             </div>
           </div>
@@ -261,6 +288,11 @@ export default function WalkStage({
             <label className="motion-toggle">카메라 흔들림 줄이기
               <input type="checkbox" checked={preferences.reduceMotion}
                 onChange={event => setPreferences({ ...preferences, reduceMotion: event.target.checked })} />
+            </label>
+            <label className="quality-setting">그래픽 품질
+              <select value={preferences.graphics} onChange={event => setPreferences({ ...preferences, graphics: event.target.value as RenderMode })}>
+                <option value="auto">자동 조절</option><option value="smooth">부드러운 화면</option><option value="detail">선명한 화면</option>
+              </select>
             </label>
             <button type="button" onClick={() => { setHelp(false); focus(); }}>매장으로 돌아가기</button>
           </section>}

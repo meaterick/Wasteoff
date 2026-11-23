@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getItem } from '../src/catalog.ts';
+import { findItems, getItem, items, lookupBarcode } from '../src/catalog.ts';
 import { budgetBalance, compare, newStore, pointsBalance, registerState, registerTotals, shelfStock, updateStore } from '../src/model.ts';
 import { canStand, counter, destinations, fixtures, room, walk } from '../src/market/layout.ts';
 
@@ -124,4 +124,48 @@ test('the self-service station accepts paid items once and preserves the running
   assert.equal(start(finished), finished);
   assert.equal(updateStore(finished, { type: 'pos-refund', number: 'POS-001' }), finished);
   assert.equal(budgetBalance(running), budgetBalance(finished));
+});
+
+test('the expanded catalogue keeps existing barcodes and supports product, department and sale searches', () => {
+  assert.equal(items.length, 39);
+  assert.equal(new Set(items.map(item => item.barcode)).size, items.length);
+  assert.equal(getItem('water').barcode, '8809702000163');
+  assert.equal(lookupBarcode(getItem('toothbrush').barcode)?.sku, 'toothbrush');
+  assert.deepEqual(findItems('여행용칫솔', 'daily').map(item => item.sku), ['toothbrush']);
+  assert.deepEqual(findItems('sAltED  Pretzel').map(item => item.sku), ['pretzel']);
+  assert.equal(findItems('칫솔', 'daily', true).length, 0);
+  assert.deepEqual(findItems('소금빵', 'bakery', true).map(item => item.sku), ['brioche']);
+});
+
+test('cross-product offers match the available pairs, preserve normal promotions and restore inventory on refund', () => {
+  let store = newStore('typical');
+  for (const sku of ['brioche', 'americano', 'latte-hot', 'fresh-egg', 'soy-milk', 'water', 'water', 'water']) {
+    store = scan(add(store, sku), sku);
+  }
+  const totals = registerTotals(store);
+  assert.deepEqual(totals.bundles.map(bundle => [bundle.id, bundle.count, bundle.discount]), [['cafe', 1, 500], ['meal', 1, 400]]);
+  assert.equal(totals.discount, 1800);
+  assert.equal(card(store), store);
+  store = remove(remove(store, 'latte-hot'), 'water');
+  const bought = card(store);
+  assert.equal(latest(bought).charged, 9400);
+  assert.equal(latest(bought).discount, 900);
+  assert.equal(latest(bought).bundles.length, 2);
+  assert.equal(budgetBalance(bought), 600);
+  assert.equal(shelfStock(bought, getItem('brioche')), 11);
+  const refunded = updateStore(bought, { type: 'pos-refund', number: 'POS-001' });
+  assert.equal(budgetBalance(refunded), 10000);
+  assert.equal(shelfStock(refunded, getItem('brioche')), 12);
+});
+
+test('paid coffee can be brewed and counts against the quantity on its receipt', () => {
+  const start = store => updateStore(store, { type: 'service-start', sku: 'americano', receipt: 'POS-001', now: 100 });
+  const checkout = scan(add(newStore('typical'), 'americano'), 'americano');
+  assert.equal(start(checkout), checkout);
+  const brewing = start(card(checkout));
+  assert.equal(registerState(brewing).preparation.ends, 8100);
+  const done = updateStore(brewing, { type: 'service-finish', now: 8100 });
+  assert.equal(latest(done).prepared.americano, 1);
+  assert.equal(start(done), done);
+  assert.equal(budgetBalance(done), 8200);
 });

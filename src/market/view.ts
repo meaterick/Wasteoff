@@ -1,13 +1,14 @@
 import * as THREE from 'three';
-import { departments, getItem, type Destination } from '../catalog';
+import { departments, getItem, type Destination, type Preparation } from '../catalog';
 import type { StoreCue } from '../storeSound';
 import { advancePlayer, angleDifference, clearCameraFraction, damp, stickVector, type Vector } from './controls';
 import { colliders, counter, destinations, fixtures, room, service, type Pose } from './layout';
+import { renderRatio, type RenderMode } from './quality';
 import { buildWorld, type Target } from './world';
 
 export type CameraMode = 'first' | 'third';
 export type Movement = 'forward' | 'back' | 'left' | 'right';
-export type ViewPreferences = { sensitivity: number; fov: number; reduceMotion: boolean };
+export type ViewPreferences = { sensitivity: number; fov: number; reduceMotion: boolean; graphics: RenderMode };
 const moveKeys: Record<Movement, string[]> = {
   forward: ['KeyW', 'ArrowUp'], back: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
 };
@@ -34,8 +35,9 @@ function targetId(target: Target | null) {
 }
 
 export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onPose, onLock, onCue, onReady, onLost }: Options) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  renderer.shadowMap.enabled = true;
+  const touch = window.matchMedia('(pointer: coarse)').matches;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: !touch, powerPreference: touch ? 'default' : 'high-performance' });
+  renderer.shadowMap.enabled = !touch;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.shadowMap.autoUpdate = false;
   renderer.shadowMap.needsUpdate = true;
@@ -79,7 +81,7 @@ export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onPose,
   const hitPoint = new THREE.Vector3();
   const keys = new Set<string>();
   const directions = new Set<Movement>();
-  let preferences: ViewPreferences = { sensitivity: 1, fov: 62, reduceMotion: false };
+  let preferences: ViewPreferences = { sensitivity: 1, fov: 62, reduceMotion: false, graphics: 'auto' };
   let mode: CameraMode = 'first';
   let pitch = -.075;
   let viewPitch = pitch;
@@ -186,14 +188,19 @@ export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onPose,
   }
 
   let size = { width: 0, height: 0 };
+  let resolutionScale = 1;
+  let frameSamples = 0;
+  let sampleTime = 0;
+  let fastWindows = 0;
   function resize() {
     const { clientWidth: width, clientHeight: height } = viewport;
+    const changed = width !== size.width || height !== size.height;
     size = { width, height };
     if (!width || !height) return;
     const aspect = width / height;
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.65, Math.sqrt(1_800_000 / (width * height)));
-    renderer.setPixelRatio(pixelRatio);
-    renderer.setSize(width, height, false);
+    const pixelRatio = renderRatio(width, height, window.devicePixelRatio || 1, touch, preferences.graphics, resolutionScale);
+    if (renderer.getPixelRatio() !== pixelRatio) renderer.setPixelRatio(pixelRatio);
+    if (changed) renderer.setSize(width, height, false);
     camera.aspect = aspect;
     camera.fov = preferences.fov + (aspect < .92 ? 8 : 0);
     camera.updateProjectionMatrix();
@@ -203,10 +210,27 @@ export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onPose,
   observer.observe(viewport);
   resize();
 
+  function adaptResolution(duration: number, moving: boolean) {
+    if (preferences.graphics !== 'auto' || paused || !ready || !moving || duration <= 0 || duration > 180) return;
+    sampleTime += duration;
+    if (++frameSamples < 30) return;
+    const average = sampleTime / frameSamples;
+    frameSamples = sampleTime = 0;
+    fastWindows = average < 19 ? fastWindows + 1 : 0;
+    const next = average > 25 ? Math.max(.65, resolutionScale - .12)
+      : fastWindows >= 3 ? Math.min(1, resolutionScale + .08) : resolutionScale;
+    if (next !== resolutionScale) {
+      resolutionScale = next;
+      fastWindows = 0;
+      resize();
+    }
+  }
+
   function frame(time: number) {
     if (disposed) return;
     animation = requestAnimationFrame(frame);
-    const dt = Math.min((time - (last || time)) / 1000, .077);
+    const duration = time - (last || time);
+    const dt = Math.min(duration / 1000, .077);
     last = time;
     if (!size.width || document.hidden) return;
 
@@ -254,6 +278,7 @@ export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onPose,
     const doorMoving = nextDoor !== doorOpen;
     doorOpen = nextDoor;
     if (!dirty && !looking && !walking && Math.abs(stride - pastStride) < .0003 && !doorMoving) return;
+    adaptResolution(duration, walking || looking);
     dirty = projectCamera(dt);
     world.setDoor(doorOpen);
     world.player.object.visible = mode === 'third' && boom > .17;
@@ -364,6 +389,12 @@ export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onPose,
       turnReset = dirty = true;
     },
     setPreferences(next: ViewPreferences) {
+      if (next.graphics !== preferences.graphics) {
+        resolutionScale = 1;
+        frameSamples = sampleTime = fastWindows = 0;
+        renderer.shadowMap.enabled = next.graphics === 'detail' || (next.graphics === 'auto' && !touch);
+        renderer.shadowMap.needsUpdate = renderer.shadowMap.enabled;
+      }
       preferences = next;
       resize();
     },
@@ -383,6 +414,10 @@ export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onPose,
     },
     setRegister(scanned: number, count: number, charge: number) {
       world.setRegister(scanned, count, charge);
+      dirty = true;
+    },
+    setPreparation(preparation?: Preparation) {
+      world.setService(preparation);
       dirty = true;
     },
     move(direction: Movement, pressed: boolean) {

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Item } from '../catalog';
+import { itemBundle, type Item } from '../catalog';
 
 export function canvasMap(width: number, height: number, paint: (ctx: CanvasRenderingContext2D) => void) {
   const canvas = document.createElement('canvas');
@@ -39,12 +39,13 @@ export function priceMap(item: Item) {
     ctx.fillText(item.name, 19, 48, 337);
     ctx.font = '850 55px system-ui, sans-serif';
     ctx.fillText(item.price.toLocaleString('ko-KR'), 19, 118);
-    if (item.offer) {
+    const offer = item.offer ?? (itemBundle(item.sku) ? 'SET' : '');
+    if (offer) {
       ctx.fillStyle = '#3c6348';
       ctx.fillRect(258, 68, 107, 57);
       ctx.fillStyle = '#fffdef';
       ctx.font = '800 40px system-ui, sans-serif';
-      ctx.fillText(item.offer, 273, 111);
+      ctx.fillText(offer, 273, 111);
     }
   });
 }

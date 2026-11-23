@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
-import { ArrowLeft, BadgeCheck, Barcode, Check, CircleAlert, CreditCard, Download, Droplets, Microwave, Plus, ReceiptText, ScanLine, ShoppingBasket, Wallet, X } from 'lucide-react';
-import labels from './assets/package-labels.webp';
-import { departments, getItem, items, type Department, type Item } from './catalog';
+import { ArrowLeft, BadgeCheck, Barcode, Check, CircleAlert, Coffee, CreditCard, Download, Droplets, Microwave, Minus, Plus, ReceiptText, ScanLine, Search, ShoppingBasket, Tag, Wallet, X } from 'lucide-react';
+import { departments, findItems, getItem, itemBundle, preparations, type Department, type Item, type Preparation } from './catalog';
+import { packageArt } from './packageArt';
 import {
   budgetBalance, canRefundReceipt, closingStep, eligiblePreparations, pendingOrder, pointReward, points, pointsBalance, registerState, registerTotals, shelfStock, won,
   type Action, type Payment, type Receipt, type Store,
@@ -9,17 +9,20 @@ import {
 import type { StoreCue } from './storeSound';
 
 export type Act = (action: Action) => Promise<boolean>;
+type Totals = ReturnType<typeof registerTotals>;
 
 export function Packaging({ item, className = '' }: { item: Item; className?: string }) {
+  const art = packageArt(item.art);
   const style = {
     '--food': item.color,
-    backgroundImage: item.art >= 0 ? `url("${labels}")` : undefined,
-    backgroundPosition: item.art >= 0 ? `${item.art % 4 / 3 * 100}% ${Math.floor(item.art / 4) * 50}%` : undefined,
+    backgroundImage: art ? `url("${art.url}")` : undefined,
+    backgroundPosition: art ? `${art.x / (art.columns - 1) * 100}% ${art.y / (art.rows - 1) * 100}%` : undefined,
+    backgroundSize: art ? `${art.columns * 100}% ${art.rows * 100}%` : undefined,
   } as CSSProperties;
-  return <span className={'packaging ' + className} style={style} aria-hidden="true">{item.art < 0 && item.label}</span>;
+  return <span className={'packaging ' + className} style={style} aria-hidden="true">{!art && item.label}</span>;
 }
 
-function StoreDialog({ title, detail, icon, onClose, children, wide = false, back }: {
+function StoreDialog({ title, detail, icon, onClose, children, wide = false, back, backLabel = '진열대로 돌아가기' }: {
   title: string;
   detail?: string;
   icon: ReactNode;
@@ -27,6 +30,7 @@ function StoreDialog({ title, detail, icon, onClose, children, wide = false, bac
   children: ReactNode;
   wide?: boolean;
   back?: () => void;
+  backLabel?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const heading = useId();
@@ -34,6 +38,7 @@ function StoreDialog({ title, detail, icon, onClose, children, wide = false, bac
   useEffect(() => {
     const element = ref.current!;
     element.showModal();
+    element.querySelector<HTMLElement>('[data-dialog-focus]')?.focus({ preventScroll: true });
     return () => element.close();
   }, []);
 
@@ -43,7 +48,7 @@ function StoreDialog({ title, detail, icon, onClose, children, wide = false, bac
       onClick={event => { if (event.currentTarget === event.target) onClose(); }}>
       <div className="store-dialog-frame">
         <div className="dialog-title">
-          {back && <button type="button" className="icon-button" aria-label="진열대로 돌아가기" onClick={back}><ArrowLeft size={17} /></button>}
+          {back && <button type="button" className="icon-button" aria-label={backLabel} onClick={back}><ArrowLeft size={17} /></button>}
           <span className="dialog-icon">{icon}</span>
           <div><h2 id={heading}>{title}</h2>{detail && <p>{detail}</p>}</div>
           <button type="button" className="icon-button dialog-dismiss" aria-label="창 닫기" onClick={onClose}><X size={20} /></button>
@@ -54,24 +59,20 @@ function StoreDialog({ title, detail, icon, onClose, children, wide = false, bac
   );
 }
 
-export function ShelfDialog({ department, store, onClose, onInspect, onAdd }: {
-  department: Department;
+type ProductActions = {
   store: Store;
-  onClose: () => void;
   onInspect: (item: Item) => void;
   onAdd: (item: Item) => void;
-}) {
-  const category = departments.find(zone => zone.id === department)!;
+};
+
+function ProductRows({ products, store, onInspect, onAdd }: ProductActions & { products: Item[] }) {
   const { basket } = registerState(store);
-  const closed = department === 'rescue' && store.step >= closingStep;
   return (
-    <StoreDialog title={category.name} detail={department === 'rescue' ? '오늘 23:00까지 판매 · 수령 포인트 적립' : category.label}
-      icon={<ShoppingBasket size={20} />} onClose={onClose}>
-      <div className="shelf-items">
-        {items.filter(item => item.department === department).map(item => {
+    <div className="shelf-items">
+        {products.map(item => {
           const inBasket = basket[item.sku] ?? 0;
           const stock = Math.max(0, shelfStock(store, item) - inBasket);
-          const availability = closed ? '판매 종료' : stock ? '재고 ' + stock + '개' : '진열 재고 없음';
+          const availability = item.rescue && store.step >= closingStep ? '판매 종료' : stock ? '재고 ' + stock + '개' : '진열 재고 없음';
           return (
             <article className="shelf-item" key={item.sku}>
               <button className="shelf-item-info" type="button" aria-label={item.name + ' 상품 정보'} onClick={() => onInspect(item)}>
@@ -82,6 +83,7 @@ export function ShelfDialog({ department, store, onClose, onInspect, onAdd }: {
                 </span>
               </button>
               {item.offer && <span className="offer-tag">{item.offer}</span>}
+              {itemBundle(item.sku) && <span className="offer-tag offer-tag--bundle">세트</span>}
               {!!item.rescue && stock > 0 && <span className="offer-tag offer-tag--rescue">+{points(pointReward(store, item))}</span>}
               <button type="button" className="add-item" aria-label={item.name + ' 담기'} disabled={!stock} onClick={() => onAdd(item)}>
                 <Plus size={19} aria-hidden="true" />
@@ -90,34 +92,81 @@ export function ShelfDialog({ department, store, onClose, onInspect, onAdd }: {
           );
         })}
       </div>
+  );
+}
+
+export function ShelfDialog({ department, onClose, ...actions }: ProductActions & { department: Department; onClose: () => void }) {
+  const category = departments.find(zone => zone.id === department)!;
+  return (
+    <StoreDialog title={category.name} detail={department === 'rescue' ? '오늘 23:00까지 판매 · 수령 포인트 적립' : category.label}
+      icon={<ShoppingBasket size={20} />} onClose={onClose}>
+      <ProductRows products={findItems('', department)} {...actions} />
     </StoreDialog>
   );
 }
 
-export function ItemDialog({ item, store, onClose, onAdd, onBack }: {
+export type ProductFilters = { query: string; department?: Department; onSale: boolean };
+
+export function CatalogDialog({ filters, onFilters, onClose, ...actions }: ProductActions & {
+  filters: ProductFilters; onFilters: (filters: ProductFilters) => void; onClose: () => void;
+}) {
+  const { query, department, onSale } = filters;
+  const products = findItems(query, department, onSale);
+  return (
+    <StoreDialog title="상품 검색" icon={<Search size={21} />} onClose={onClose} wide>
+      <div className="catalog-filters">
+        <label className="catalog-query"><Search size={18} aria-hidden="true" />
+          <span className="sr-only">상품 이름 또는 바코드</span>
+          <input data-dialog-focus type="search" enterKeyHint="search" placeholder="상품 이름 또는 바코드" value={query}
+            onChange={event => onFilters({ ...filters, query: event.target.value })} />
+          {query && <button className="icon-button" type="button" aria-label="검색어 지우기" onClick={() => onFilters({ ...filters, query: '' })}><X size={16} /></button>}
+        </label>
+        <div className="catalog-controls">
+          <select aria-label="상품 코너" value={department ?? ''} onChange={event => onFilters({ ...filters, department: (event.target.value || undefined) as Department | undefined })}>
+            <option value="">전체 코너</option>
+            {departments.map(zone => <option key={zone.id} value={zone.id}>{zone.name}</option>)}
+          </select>
+          <button type="button" className="button button-secondary sale-filter" aria-pressed={onSale} onClick={() => onFilters({ ...filters, onSale: !onSale })}>
+            <Tag size={16} aria-hidden="true" /> 행사 상품만
+          </button>
+        </div>
+        <p className="catalog-count" role="status">상품 {products.length}개</p>
+      </div>
+      {products.length ? <div className="catalog-results"><ProductRows products={products} {...actions} /></div>
+        : <p className="empty-results">검색 결과가 없어요. 다른 검색어나 코너를 선택해 보세요.</p>}
+    </StoreDialog>
+  );
+}
+
+export function ItemDialog({ item, store, onClose, onAdd, onBack, fromSearch }: {
   item: Item;
   store: Store;
   onClose: () => void;
   onAdd: (item: Item) => void;
   onBack: () => void;
+  fromSearch?: boolean;
 }) {
   const inBasket = registerState(store).basket[item.sku] ?? 0;
   const stock = Math.max(0, shelfStock(store, item) - inBasket);
+  const bundle = itemBundle(item.sku);
   return (
-    <StoreDialog title={item.name} detail={item.label} icon={<Barcode size={20} />} onClose={onClose} back={onBack}>
+    <StoreDialog title={item.name} detail={item.label} icon={<Barcode size={20} />} onClose={onClose} back={onBack}
+      backLabel={fromSearch ? '검색 결과로 돌아가기' : '진열대로 돌아가기'}>
       <div className="item-details">
         <div className="item-photo"><Packaging item={item} />{item.offer && <span className="offer-tag">{item.offer} 행사</span>}</div>
         <div className="item-description">
           <strong className="item-price">{won(item.price)}</strong>
+          {item.description && <p className="product-description">{item.description}</p>}
           <dl>
             <div><dt>내용량</dt><dd>{item.size}</dd></div>
             <div><dt>진열 재고</dt><dd>{stock}개</dd></div>
             {!!inBasket && <div><dt>장바구니</dt><dd>{inBasket}개</dd></div>}
-            {item.preparation && <div><dt>셀프 코너</dt><dd>{item.preparation === 'microwave' ? '가열 가능' : '온수 이용'}</dd></div>}
-            <div><dt>{item.rescue || item.department === 'fresh' ? '소비기한' : '보관'}</dt><dd>{item.date}</dd></div>
+            {item.preparation && <div><dt>셀프 코너</dt><dd>{preparations[item.preparation].label}</dd></div>}
+            <div><dt>{item.date.startsWith('다음 날') || item.rescue ? '소비기한' : '이용 안내'}</dt><dd>{item.date}</dd></div>
             {!!item.rescue && <div><dt>수령 후 적립</dt><dd>+{points(pointReward(store, item))}</dd></div>}
             <div className="item-barcode"><dt><Barcode size={16} aria-hidden="true" /> 바코드</dt><dd>{item.barcode}</dd></div>
           </dl>
+          {bundle && <p className="bundle-callout"><Tag size={16} aria-hidden="true" /> {bundle.name} 구매 시 {won(bundle.discount)} 할인</p>}
           <button type="button" className="button button-primary button-wide" disabled={!stock} onClick={() => onAdd(item)}>
             <ShoppingBasket size={16} /> 장바구니에 담기
           </button>
@@ -125,6 +174,43 @@ export function ItemDialog({ item, store, onClose, onAdd, onBack }: {
       </div>
     </StoreDialog>
   );
+}
+
+export function BasketItems({ totals, store, onAction }: { totals: Totals; store: Store; onAction: Act }) {
+  if (!totals.count) return <div className="basket-empty">
+    <span className="basket-glyph"><ShoppingBasket size={23} strokeWidth={1.65} /></span><strong>장바구니가 비어 있어요</strong>
+  </div>;
+  return <ul className="rail-basket">
+    {totals.lines.map(({ item, quantity }) => <li key={item.sku}>
+      <Packaging item={item} /><span><strong>{item.name}</strong><small>{won(item.price)} × {quantity}</small></span>
+      <div className="basket-stepper">
+        <button type="button" className="icon-button" aria-label={item.name + ' 장바구니에서 1개 빼기'}
+          onClick={() => void onAction({ type: 'basket-remove', sku: item.sku })}><Minus size={15} /></button>
+        <button type="button" className="icon-button" aria-label={item.name + ' 장바구니에 1개 더 담기'} disabled={quantity >= shelfStock(store, item)}
+          onClick={() => void onAction({ type: 'basket-add', sku: item.sku })}><Plus size={15} /></button>
+      </div>
+    </li>)}
+  </ul>;
+}
+
+export function BasketDiscounts({ totals }: { totals: Totals }) {
+  if (!totals.discount) return null;
+  return <div className="basket-discounts">
+    <span><Tag size={14} aria-hidden="true" /> 행사 할인</span><strong>−{won(totals.discount)}</strong>
+    {totals.bundles.map(bundle => <small key={bundle.id}>{bundle.name} × {bundle.count}</small>)}
+  </div>;
+}
+
+export function BasketDialog({ store, onAction, onCheckout, onClose }: { store: Store; onAction: Act; onCheckout: () => void; onClose: () => void }) {
+  const totals = registerTotals(store);
+  return <StoreDialog title="장바구니" detail={totals.count + '개 · 잔액 ' + won(budgetBalance(store))} icon={<ShoppingBasket size={20} />} onClose={onClose}>
+    <div className="basket-dialog-content">
+      <BasketItems totals={totals} store={store} onAction={onAction} />
+      <BasketDiscounts totals={totals} />
+      <div className="basket-total"><span>결제 예정</span><strong>{won(totals.charged)}</strong></div>
+      <button type="button" className="button button-primary button-wide" onClick={onCheckout}><ScanLine size={17} /> 계산대로 이동</button>
+    </div>
+  </StoreDialog>;
 }
 
 const paymentName = { card: '카드', cash: '현금' };
@@ -137,6 +223,7 @@ function downloadReceipt(receipt: Receipt) {
       return item.name + ' × ' + line.quantity + '   ' + won(line.price * line.quantity - line.discount);
     }),
     ...Object.entries(receipt.prepared ?? {}).map(([sku, count]) => '셀프 코너   ' + getItem(sku)?.name + ' × ' + count),
+    ...(receipt.bundles ?? []).map(bundle => bundle.name + ' × ' + bundle.count + '   −' + won(bundle.discount)),
     '상품 합계   ' + won(receipt.subtotal), '행사 할인   ' + won(receipt.discount),
     '포인트 사용   ' + points(receipt.usedPoints), '결제 금액   ' + won(receipt.charged),
     ...(receipt.method === 'cash' ? ['받은 금액   ' + won(receipt.tendered), '거스름돈   ' + won(receipt.change)] : []),
@@ -173,6 +260,7 @@ function ReceiptView({ store, receipt, onAction, onShop }: {
           <div><dt>결제 방법</dt><dd>{paymentName[receipt.method]}</dd></div>
           {!!prepared && <div><dt>셀프 코너 이용</dt><dd>{prepared}개</dd></div>}
           {receipt.discount > 0 && <div><dt>행사 할인</dt><dd>−{won(receipt.discount)}</dd></div>}
+          {receipt.bundles?.map(bundle => <div className="bundle-line" key={bundle.id}><dt>{bundle.name} × {bundle.count}</dt><dd>−{won(bundle.discount)}</dd></div>)}
           {receipt.usedPoints > 0 && <div><dt>포인트 사용</dt><dd>−{points(receipt.usedPoints)}</dd></div>}
           {receipt.method === 'cash' && <><div><dt>받은 금액</dt><dd>{won(receipt.tendered)}</dd></div><div><dt>거스름돈</dt><dd>{won(receipt.change)}</dd></div></>}
           <div className="paper-charged"><dt>결제 금액</dt><dd>{won(receipt.charged)}</dd></div>
@@ -310,6 +398,7 @@ export function PosDialog({ store, signedIn, onAction, onClose, onLogin, onCue }
               <dl className="pos-amount">
                 <div><dt>상품 합계</dt><dd>{won(totals.subtotal)}</dd></div>
                 <div><dt>행사 할인</dt><dd>{totals.discount ? '−' : ''}{won(totals.discount)}</dd></div>
+                {totals.bundles.map(bundle => <div className="bundle-line" key={bundle.id}><dt>{bundle.name} × {bundle.count}</dt><dd>−{won(bundle.discount)}</dd></div>)}
                 {totals.rescueSubtotal > 0 && onHand > 0 && <div>
                   <dt><button type="button" className="points-switch" role="switch" aria-checked={register.usePoints}
                     onClick={() => void onAction({ type: 'pos-points', use: !register.usePoints })}>{points(onHand)} 사용</button></dt>
@@ -328,15 +417,25 @@ export function PosDialog({ store, signedIn, onAction, onClose, onLogin, onCue }
               </label>}
               {totals.charged > balance && <p className="pos-warning" role="status">남은 예산보다 {won(totals.charged - balance)} 많아요.</p>}
               {totals.charged <= balance && method === 'cash' && !cashValid && <p className="pos-warning">받은 금액을 결제액과 예산 사이로 입력해 주세요.</p>}
-              <button type="button" className="button button-primary button-wide" disabled={signedIn && !canPay}
-                onClick={() => void pay()}>{signedIn ? '가상 결제하기' : '로그인하고 장보기'}</button>
             </section>
+          </div>
+          <div className="pos-footer">
+            <div><small>{totals.count > 0 ? `스캔 ${totals.scanCount}/${totals.count}` : '결제 예정'}</small><strong>{won(totals.charged)}</strong></div>
+            <button type="button" className="button button-primary" disabled={signedIn && !canPay}
+              onClick={() => void pay()}>{signedIn ? '가상 결제하기' : '로그인하고 장보기'}</button>
           </div>
         </>
       )}
     </StoreDialog>
   );
 }
+
+const serviceControls = {
+  microwave: { title: '전자레인지', Icon: Microwave },
+  'hot-water': { title: '온수', Icon: Droplets },
+  coffee: { title: '커피', Icon: Coffee },
+};
+const serviceMethods = Object.keys(preparations) as Preparation[];
 
 export function ServiceDialog({ store, onAction, onClose }: {
   store: Store;
@@ -346,13 +445,16 @@ export function ServiceDialog({ store, onAction, onClose }: {
   const station = registerState(store).preparation;
   const eligible = eligiblePreparations(store);
   const [choice, setChoice] = useState('');
+  const [machineChoice, setMachineChoice] = useState<Preparation>();
   const [time, setTime] = useState(Date.now);
   const [message, setMessage] = useState('');
   const wasRunning = useRef(false);
-  const selected = eligible.find(option => option.receipt + ':' + option.item.sku === choice) ?? eligible[0];
-  const machineItem = station ? getItem(station.sku) : selected?.item;
-  const microwave = machineItem?.preparation !== 'hot-water';
-  const Machine = microwave ? Microwave : Droplets;
+  const runningItem = station ? getItem(station.sku) : undefined;
+  const method = runningItem?.preparation ?? machineChoice ?? eligible[0]?.method ?? 'microwave';
+  const options = eligible.filter(option => option.method === method);
+  const selected = options.find(option => option.receipt + ':' + option.item.sku === choice) ?? options[0];
+  const machine = preparations[method];
+  const { Icon: Machine } = serviceControls[method];
   const seconds = station ? Math.max(0, Math.ceil((station.ends - time) / 1000)) : 0;
   const progress = station ? Math.min(1, Math.max(0, (time - station.started) / (station.ends - station.started))) : 0;
 
@@ -376,28 +478,35 @@ export function ServiceDialog({ store, onAction, onClose }: {
   }
 
   return (
-    <StoreDialog title="셀프 코너" detail="결제한 간편식과 컵라면을 준비하세요." icon={<Machine size={22} />} onClose={onClose}>
+    <StoreDialog title="셀프 코너" detail="결제한 간편식, 컵라면과 원두커피를 준비하세요." icon={<Machine size={22} />} onClose={onClose}>
       <div className="service-content">
+        <div className="service-switcher" role="group" aria-label="셀프 코너 기기">
+          {serviceMethods.map(id => {
+            const { title, Icon } = serviceControls[id];
+            return <button className="button button-secondary" type="button" key={id} aria-pressed={method === id} disabled={!!station}
+              onClick={() => { setMachineChoice(id); setChoice(''); setMessage(''); }}><Icon size={16} /> {title}</button>;
+          })}
+        </div>
         <div className="service-machine">
-          <span><Machine size={24} /> {microwave ? '전자레인지' : '온수기'}</span>
+          <span><Machine size={24} /> {machine.label}</span>
           <strong>{station ? '00:' + String(seconds).padStart(2, '0') : '대기'}</strong>
           <div className="service-track" aria-hidden="true"><span style={{ width: progress * 100 + '%' }} /></div>
-          {station && <small>{machineItem?.name} 준비 중</small>}
+          {station && <small>{runningItem?.name} 준비 중</small>}
         </div>
-        {station ? <p className="service-copy">창을 닫아도 준비가 계속돼요.</p> : eligible.length > 0 ? (
+        {station ? <p className="service-copy">창을 닫아도 준비가 계속돼요.</p> : selected ? (
           <>
             <label className="service-choice">준비할 상품
-              <select value={selected ? selected.receipt + ':' + selected.item.sku : ''} onChange={event => setChoice(event.target.value)}>
-                {eligible.map(option => <option key={option.receipt + option.item.sku} value={option.receipt + ':' + option.item.sku}>
+              <select value={selected.receipt + ':' + selected.item.sku} onChange={event => setChoice(event.target.value)}>
+                {options.map(option => <option key={option.receipt + option.item.sku} value={option.receipt + ':' + option.item.sku}>
                   {option.item.name} · {option.remaining}개 · {option.receipt}
                 </option>)}
               </select>
             </label>
             <button className="button button-primary button-wide" type="button" onClick={() => void start()}>
-              <Machine size={17} /> {microwave ? '가열 시작' : '온수 받기'}
+              <Machine size={17} /> {machine.action}
             </button>
           </>
-        ) : <p className="service-copy">준비할 수 있는 구매 상품이 없어요. 도시락이나 컵라면을 결제하면 이용할 수 있어요.</p>}
+        ) : <p className="service-copy">이 기기에서 준비할 수 있는 구매 상품이 없어요.</p>}
         {message && <p className="service-status" role="status">{message}</p>}
       </div>
     </StoreDialog>
