@@ -1,399 +1,241 @@
-import { useEffect, useState } from 'react';
-import dosirak from './assets/dosirak-1440.jpg';
-import { PaymentScreen, PickupScreen, ProductScreen, QrPayScreen } from './components/CustomerScreens';
-import { ApprovalList, Equation, ForecastBasis, OwnerMiniPanel, PointPolicy, StockBar } from './components/Inventory';
-import { Process3D } from './components/Process3D';
-import { Icon, MockBadge, Phone } from './components/ui';
-import { finalAmount, flowSteps, inventory, limitedQty, payment, pickup, pointPolicy, points, product, pt, store, won } from './data';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowRight, BarChart3, Box, Check, ChevronDown, Clock3, Leaf, LogIn, LogOut, ShoppingBasket, Store as StoreIcon, Wallet,
+} from 'lucide-react';
+import { Checkout } from './Checkout';
+import { Results } from './Results';
+import { ProductDialog, ShopItems } from './ShopItems';
+import { SignInDialog } from './SignInDialog';
+import { applyParticipantAction, restoreSignIn, signOut, type SignIn } from './participants';
+import {
+  budgetBalance, cartSummary, closingStep, closingTime, getProduct, newStore, offerStock,
+  openingBudget, pendingOrder, scenarios, times, won,
+  type Action, type ProductId, type ScenarioId,
+} from './model';
 
-const sections = [
-  { id: 'process', label: '3D 과정' },
-  { id: 'owner', label: '점주 승인' },
-  { id: 'customer', label: '고객 화면' },
-  { id: 'done', label: '수령 완료' },
-] as const;
+const StoreScene = lazy(() => import('./StoreScene'));
+const guestStore = newStore('typical');
 
-/** 스크롤 시 [data-reveal] 요소를 부드럽게 등장시키고, 현재 섹션을 추적합니다. */
-function useScrollEffects() {
-  const [active, setActive] = useState<string>('');
+export default function App() {
+  const [account, setAccount] = useState<SignIn>();
+  const [restoring, setRestoring] = useState(true);
+  const [view, setView] = useState<'shop' | 'results'>('shop');
+  const [selected, setSelected] = useState<ProductId>();
+  const [auth, setAuth] = useState<'create' | 'signIn'>();
+  const [notice, setNotice] = useState('');
+  const noticeTimer = useRef<number>();
+  const actions = useRef(Promise.resolve());
+  const leaving = useRef(false);
+  const cart = useRef<HTMLElement>(null);
+
+  const store = account?.store ?? guestStore;
+  const closed = store.step === closingStep;
+  const order = pendingOrder(store);
+  const cartCount = cartSummary(store).count;
+  const stock = useMemo(() => offerStock(store), [store]);
 
   useEffect(() => {
-    const revealTargets = document.querySelectorAll<HTMLElement>('[data-reveal]');
-    const revealObserver = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('is-visible');
-            revealObserver.unobserve(entry.target);
-          }
-        });
-      },
-      { threshold: 0.15, rootMargin: '0px 0px -8% 0px' },
-    );
-    revealTargets.forEach((el) => revealObserver.observe(el));
-
-    const sectionObserver = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) setActive(entry.target.id);
-        });
-      },
-      { rootMargin: '-45% 0px -50% 0px' },
-    );
-    document.querySelectorAll('section[id]').forEach((el) => sectionObserver.observe(el));
-
+    let mounted = true;
+    async function resume() {
+      try {
+        const restored = await restoreSignIn();
+        if (mounted) setAccount(restored);
+      } catch {
+        if (mounted) setNotice('브라우저의 참가 기록을 불러오지 못했어요.');
+      } finally {
+        if (mounted) setRestoring(false);
+      }
+    }
+    void resume();
+    window.addEventListener('focus', resume);
     return () => {
-      revealObserver.disconnect();
-      sectionObserver.disconnect();
+      mounted = false;
+      window.removeEventListener('focus', resume);
+      window.clearTimeout(noticeTimer.current);
     };
   }, []);
 
-  return active;
-}
+  function announce(message: string) {
+    setNotice(message);
+    window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(''), 3000);
+  }
 
-function Header({ active }: { active: string }) {
-  return (
-    <header className="site-header">
-      <div className="container site-header__inner">
-        <a href="#top" className="brand">
-          <span className="brand__mark" aria-hidden="true" />
-          Wasteoff
-        </a>
-        <nav aria-label="섹션 이동">
-          <ul className="site-nav">
-            {sections.map((s, i) => (
-              <li key={s.id}>
-                <a href={`#${s.id}`} className={active === s.id ? 'is-active' : undefined}>
-                  <span className="site-nav__num">{i + 1}</span>
-                  {s.label}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </nav>
-      </div>
-    </header>
-  );
-}
+  function dispatch(action: Action) {
+    if (!account || leaving.current) return;
+    actions.current = actions.current.then(async () => {
+      try {
+        const result = await applyParticipantAction(action);
+        setAccount(result?.account);
+        if (!result) {
+          announce('다시 로그인해 주세요.');
+          setAuth('signIn');
+        } else if (action.type === 'add' && result.changed) {
+          announce(getProduct(action.id).name + '을(를) 담았어요.');
+        } else if (action.type === 'checkout' && !result.changed) {
+          announce('잔액과 담은 수량을 확인해 주세요.');
+        }
+      } catch {
+        announce('변경 내용을 저장하지 못했어요. 다시 시도해 주세요.');
+      }
+    });
+  }
 
-function Hero() {
-  return (
-    <section className="hero" id="top" aria-labelledby="hero-title">
-      <div className="container hero__grid">
-        <div className="hero__copy">
-          <p className="eyebrow">편의점 수요예측 기반 마감 판매</p>
-          <h1 id="hero-title" className="hero__title">
-            마감 1시간 전,
-            <br />
-            <em>남을 상품만</em>
-            <br />
-            한정 판매
-          </h1>
-          <p className="hero__lead">
-            오늘 남을 도시락을 미리 판매합니다. 수요예측이 남을 상품과 수량을 찾고 점주는 승인만 합니다. 고객은 Wasteoff
-            사이트에서 마감 상품을 보고, 포인트를 쓴 뒤 QR로 결제하고, 주문번호로 픽업해 포인트를 받습니다.
-          </p>
-          <div className="hero__actions">
-            <a href="#process" className="btn btn--primary">
-              판매 흐름 보기 <Icon name="down" size={18} />
-            </a>
-            <span className="hero__note">
-              {store.name} · {product.name} · {store.checkTime} 기준 시연
-            </span>
-          </div>
-        </div>
+  async function exit() {
+    if (leaving.current) return;
+    leaving.current = true;
+    try {
+      await actions.current;
+      await signOut();
+      setAccount(undefined);
+      setView('shop');
+      announce('로그아웃했어요.');
+    } catch {
+      setAccount(undefined);
+      announce('브라우저의 로그인 상태를 정리하지 못했어요.');
+    } finally {
+      leaving.current = false;
+    }
+  }
 
-        <div className="hero__visual">
-          <div className="hero__photo">
-            <img src={dosirak} alt="편의점 제육 도시락. 밥, 제육볶음, 소시지볶음, 계란말이, 햄, 김치가 칸마다 담겨 있다." width={1440} height={810} />
-          </div>
-          <div className="hero__screens">
-            <div className="hero__screen hero__screen--phone">
-              <span className="hero__screen-label">고객용 · 모바일 주문</span>
-              <Phone label="고객용 마감 상품 선택 화면 예시" time="22:14">
-                <ProductScreen />
-              </Phone>
-            </div>
-            <div className="hero__screen hero__screen--owner">
-              <span className="hero__screen-label">점주용 · 재고 화면</span>
-              <OwnerMiniPanel />
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
+  function navigate(next: typeof view) {
+    if (next === view) return;
+    setView(next);
+    setSelected(undefined);
+    window.scrollTo({ top: 0 });
+  }
 
-function ProcessSection() {
-  return (
-    <section className="section section--process" id="process" aria-labelledby="process-title">
-      <div className="container">
-        <div className="section-head" data-reveal>
-          <p className="step-tag">한눈에 보기 · 3D</p>
-          <h2 id="process-title">3D로 보는 실제 과정</h2>
-          <p>
-            {store.name}의 마감 1시간을 따라갑니다. 수요예측과 점주 승인, 사이트에서 상품 확인과 포인트 사용·QR 결제,
-            주문번호 픽업과 포인트 적립까지 이어집니다.
-          </p>
-        </div>
-        <Process3D />
-      </div>
-    </section>
-  );
-}
+  function showCart() {
+    cart.current?.scrollIntoView({ block: 'nearest' });
+    cart.current?.focus({ preventScroll: true });
+  }
 
-function OwnerSection() {
-  return (
-    <section className="section section--owner" id="owner" aria-labelledby="owner-title">
-      <div className="container">
-        <div className="section-head" data-reveal>
-          <p className="step-tag">STEP 1 · 점주 화면</p>
-          <h2 id="owner-title">오늘 몇 개를 판매에 열까?</h2>
-          <p>
-            {store.checkTime}, 수요예측이 {store.name}에서 오늘 남을 상품과 수량을 추천합니다. 점주는 계산하지 않고,
-            추천된 한정 판매 상품과 수량을 확인해 승인만 합니다.
-          </p>
-        </div>
+  function add(id: ProductId) {
+    if (!account) {
+      setSelected(undefined);
+      setAuth('create');
+    } else {
+      dispatch({ type: 'add', id });
+    }
+  }
 
-        <div className="dashboard" data-reveal>
-          <div className="dashboard__top">
-            <div className="dashboard__context">
-              <span className="pill pill--green">{store.name}</span>
-              <span className="pill">
-                <Icon name="clock" size={15} /> 지금 {store.checkTime}
-              </span>
-              <span className="pill">
-                {product.name} · {store.saleEnd} 판매 마감
-              </span>
-            </div>
-            <MockBadge />
-          </div>
+  const resultView = view === 'results';
 
-          <ForecastBasis />
-          <p className="dashboard__sub">
-            수요예측 결과 · {product.name} ({store.saleEnd} 판매 마감)
-          </p>
-          <Equation />
-
-          <div className="dashboard__bar">
-            <p className="dashboard__bar-title">실물 재고 {inventory.onHand}개를 이렇게 나눕니다</p>
-            <StockBar />
-          </div>
-
-          <div className="dashboard__result">
-            <ApprovalList />
-            <div className="open-badge" data-reveal>
-              <span className="open-badge__icon">
-                <Icon name="unlock" size={36} />
-              </span>
-              <span className="open-badge__text">
-                <strong>{limitedQty}개</strong> 판매 공개
-              </span>
-            </div>
-
-          </div>
-        </div>
-
-        <div data-reveal>
-          <PointPolicy />
-        </div>
-
-        <div className="explain" data-reveal>
-          <div className="explain__icon">
-            <Icon name="chart" size={26} />
-          </div>
-          <div>
-            <h3>판매에 열리는 수량은 매일 다릅니다</h3>
-            <p>
-              수요예측이 그날의 실물 재고와 예상 수요로 남을 수량을 다시 계산합니다. 정상가로 팔릴 몫과 안전재고는
-              남겨 두고 남을 것으로 보이는 수량만 추천합니다. 같은 12개라도 수요예측 판매가 9개인 날은 추천이
-              0개입니다. 주문 마감 {product.orderDeadline}, 픽업 마감 {product.pickupDeadline}.
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function CustomerSection() {
-  const screens = [
-    { title: '마감 상품 확인', desc: `${product.name} 한정 ${product.limitedQty}개 · ${won(product.price)}`, time: '22:14', el: <ProductScreen /> },
-    { title: '포인트 사용', desc: `${pt(points.used)} 사용 → ${won(finalAmount)}`, time: '22:15', el: <PaymentScreen /> },
-    { title: 'QR 결제', desc: `결제 QR을 ${payment.selectedMethod}로 스캔`, time: '22:16', el: <QrPayScreen /> },
-    { title: '픽업 안내', desc: `픽업 번호 ${pickup.number}`, time: '22:17', el: <PickupScreen /> },
-  ];
-  return (
-    <section className="section section--customer" id="customer" aria-labelledby="customer-title">
-      <div className="container">
-        <div className="section-head" data-reveal>
-          <p className="step-tag">STEP 2 · 고객 화면</p>
-          <h2 id="customer-title">사이트에서 고르고, QR로 결제하고, 주문번호로 픽업</h2>
-          <p>
-            고객은 Wasteoff 사이트에서 오늘 마감 상품을 확인합니다. 포인트를 쓴 뒤 사이트에 뜬 결제 QR을 간편결제 앱으로
-            스캔하면 픽업 번호가 나옵니다.
-          </p>
-        </div>
-
-        <ol className="phone-flow">
-          {screens.map((s, i) => (
-            <li key={s.title} className="phone-flow__item" data-reveal style={{ transitionDelay: `${i * 120}ms` }}>
-              <div className="phone-flow__caption">
-                <span className="phone-flow__num">{i + 1}</span>
-                <div>
-                  <h3>{s.title}</h3>
-                  <p>{s.desc}</p>
-                </div>
-              </div>
-              <Phone label={`${s.title} 화면 예시`} time={s.time}>
-                {s.el}
-              </Phone>
-              {i < screens.length - 1 && (
-                <span className="phone-flow__arrow" aria-hidden="true">
-                  <Icon name="arrow" size={26} />
-                </span>
-              )}
-            </li>
-          ))}
-        </ol>
-      </div>
-    </section>
-  );
-}
-
-function DoneSection() {
-  const flowIcons = ['chart', 'check', 'unlock', 'qr', 'bag', 'gift'] as const;
-  return (
-    <section className="section section--done" id="done" aria-labelledby="done-title">
-      <div className="container">
-        <div className="section-head" data-reveal>
-          <p className="step-tag">STEP 3 · 수령 완료</p>
-          <h2 id="done-title">고객과 점주에게 보이는 결과</h2>
-          <p>
-            직원이 픽업 번호를 확인해 건네면 주문이 끝나고, 상품별로 계산된 포인트가 쌓입니다. 오늘 적립한 포인트는
-            내일부터 쓸 수 있습니다.
-          </p>
-        </div>
-
-        <div className="result-grid">
-          <div className="staff-card" data-reveal>
-            <div className="staff-card__head">
-              <span>
-                <b>직원 화면</b> · {store.name} 픽업 주문
-              </span>
-              <MockBadge tone="dark" />
-            </div>
-            <div className="staff-row">
-              <span className="staff-row__code">{pickup.number}</span>
-              <span className="staff-row__dot" aria-hidden="true">·</span>
-              <span className="staff-row__item">
-                {product.name} {pickup.quantity}개
-              </span>
-              <span className="staff-row__dot" aria-hidden="true">·</span>
-              <span className="staff-row__status">
-                <Icon name="check" size={20} /> 수령 완료
-              </span>
-            </div>
-            <dl className="staff-meta">
-              <div>
-                <dt>결제</dt>
-                <dd>웹 선결제 {won(finalAmount)}</dd>
-              </div>
-              <div>
-                <dt>판매 구분</dt>
-                <dd>마감 한정 판매</dd>
-              </div>
-              <div>
-                <dt>픽업 마감</dt>
-                <dd>{product.pickupDeadline}</dd>
-              </div>
-            </dl>
-          </div>
-
-          <div className="points-card" data-reveal style={{ transitionDelay: '120ms' }}>
-            <div className="points-card__head">
-              <span>
-                <b>고객 화면</b> · 포인트 내역
-              </span>
-              <MockBadge />
-            </div>
-            <ul className="points-list">
-              <li>
-                <span>이번 주문 {pt(points.used)} 사용</span>
-                <strong className="minus">−{pt(points.used)}</strong>
-              </li>
-              <li>
-                <span>
-                  수령 후 {pt(points.earned)} 적립
-                  <small className="points-list__note">
-                    {product.name} 유동 포인트 · 상한 {pt(pointPolicy.maxPoints)} 적용
-                  </small>
-                </span>
-                <strong className="plus">+{pt(points.earned)}</strong>
-              </li>
-            </ul>
-            <div className="points-card__balance">
-              <span>현재 잔액</span>
-              <strong>{pt(points.balance)}</strong>
-            </div>
-            <p className="points-card__usable">
-              오늘 사용 가능 <b>{pt(points.usableToday)}</b> · 내일부터 <b>{pt(points.balance)}</b> 사용 가능
-            </p>
-          </div>
-        </div>
-
-        <h3 className="flow-title" data-reveal>
-          전체 흐름
-        </h3>
-        <ol className="flow" aria-label="전체 흐름">
-          {flowSteps.map((s, i) => (
-            <li key={s.key} className="flow__step" data-reveal style={{ transitionDelay: `${i * 100}ms` }}>
-              <span className="flow__icon">
-                <Icon name={flowIcons[i]} size={24} />
-              </span>
-              <strong>{s.label}</strong>
-              <span className="flow__desc">{s.desc}</span>
-            </li>
-          ))}
-        </ol>
-      </div>
-    </section>
-  );
-}
-
-function Footer() {
-  return (
-    <footer className="site-footer">
-      <div className="container">
-        <p>
-          이 페이지는 발표용 시연 페이지입니다. 화면에 나오는 주문, 재고, 결제, 포인트는 모두 고정된 예시 데이터이며
-          로그인·실제 결제·POS 연동·데이터 저장은 포함하지 않습니다.
-        </p>
-        <p className="site-footer__credit">
-          도시락 사진: JunHyun Cho, CC0 1.0 (Wikimedia Commons “Convenience store dosirak.jpg”)
-        </p>
-      </div>
-    </footer>
-  );
-}
-
-export default function App() {
-  const active = useScrollEffects();
   return (
     <>
-      <a className="skip-link" href="#process">
-        시연 구간으로 건너뛰기
-      </a>
-      <Header active={active} />
-      <main>
-        <Hero />
-        <ProcessSection />
-        <OwnerSection />
-        <CustomerSection />
-        <DoneSection />
+      <a href="#main" className="skip-link">본문으로 건너뛰기</a>
+      <header className="header">
+        <div className="shell header-inner">
+          <button type="button" className="brand" aria-label="Wasteoff 매장 체험" onClick={() => navigate('shop')}>
+            <span className="brand-icon"><Leaf size={20} strokeWidth={2.2} aria-hidden="true" /></span>
+            <span>Wasteoff<span className="brand-period">.</span></span>
+          </button>
+          <nav className="view-nav" aria-label="실험 화면">
+            <button type="button" aria-current={resultView ? undefined : 'page'} onClick={() => navigate('shop')}>
+              <StoreIcon size={17} aria-hidden="true" /> 매장 체험
+            </button>
+            <button type="button" aria-current={resultView ? 'page' : undefined} onClick={() => navigate('results')}>
+              <BarChart3 size={17} aria-hidden="true" /> 효과 비교
+            </button>
+          </nav>
+          <div className="header-actions">
+            {!resultView && <button type="button" className="header-cart icon-button" aria-label={`장바구니 보기 (${cartCount}개)`} onClick={showCart}>
+              <ShoppingBasket size={19} aria-hidden="true" />
+              {cartCount > 0 && <span className="basket-badge">{cartCount}</span>}
+            </button>}
+            {account ? (
+              <div className="account-menu">
+                <span className="account-name">{account.name}</span>
+                <button type="button" className="icon-button" title="로그아웃" aria-label="로그아웃" onClick={() => void exit()}><LogOut size={17} /></button>
+              </div>
+            ) : (
+              <button type="button" className="button button-secondary header-login" disabled={restoring} onClick={() => setAuth('signIn')}>
+                <LogIn size={16} aria-hidden="true" /> 로그인
+              </button>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <main className="shell main" id="main">
+        <div className="intro">
+          <div className="intro-copy">
+            <p className="eyebrow"><span /> WASTEOFF STORE LAB</p>
+            <h1>{resultView ? '마감 판매의 효과' : '마감 한 시간 전'}<span>.</span></h1>
+            <p>{resultView
+              ? '같은 재고와 손님 수요로 일반 판매와 Wasteoff의 마감 결과를 비교해요.'
+              : '3D 편의점을 둘러보고, 한정된 예산으로 오늘 남을 상품을 골라보세요.'}</p>
+          </div>
+          <div className="run-tools">
+            <div className="balance-card">
+              <span className="balance-icon"><Wallet size={19} aria-hidden="true" /></span>
+              <div><span>{account ? '남은 가상 예산' : '참가자 시작 예산'}</span><strong>{won(account ? budgetBalance(store) : openingBudget)}</strong></div>
+            </div>
+            {!resultView && (
+              <div className="time-card">
+                <Clock3 size={19} aria-hidden="true" />
+                <div><span>매장 시각</span><strong>{times[store.step]}</strong></div>
+                {closed ? <span className="closed-label">마감</span> : (
+                  <button className="advance" type="button" onClick={() => account ? dispatch({ type: 'advance' }) : setAuth('create')}>
+                    {store.step === closingStep - 1 ? '마감하기' : '15분 진행'} <ArrowRight size={14} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {resultView ? (
+          <Results store={store} participant={account?.name} onShop={() => navigate('shop')}
+            onClose={() => dispatch({ type: 'close' })} onReset={() => dispatch({ type: 'reset', scenario: store.scenario })} />
+        ) : (
+          <div className="shop-layout">
+            <section className="market-stage" aria-label="3D 편의점">
+              <div className="stage-top">
+                <span className="stage-label"><Box size={16} aria-hidden="true" /> 3D 편의점</span>
+                <span className={'stage-status' + (closed ? ' stage-status--closed' : '')}>
+                  <span className="status-dot" /> {closed ? '판매 종료' : closingTime + ' 픽업 마감'}
+                </span>
+              </div>
+              <Suspense fallback={<div className="scene-message" role="status"><StoreIcon size={30} /><strong>매장을 준비하고 있어요</strong></div>}>
+                <StoreScene stock={stock} waitingForPickup={Boolean(order)}
+                  onSelect={target => { if (target === 'register') showCart(); else setSelected(target); }} />
+              </Suspense>
+            </section>
+
+            <div className="shop-side">
+              <Checkout store={store} stock={stock} host={cart} dispatch={dispatch} onAdd={add}
+                onResults={() => navigate('results')} signedIn={Boolean(account)} onLogin={() => setAuth('create')} />
+              <div className="scenario-control">
+                <label htmlFor="scenario">일반 손님 수요</label>
+                <div className="select-shell">
+                  <select id="scenario" value={store.scenario} disabled={!account || closed || store.step !== 0 || store.orders.length > 0 || cartCount > 0}
+                    onChange={event => dispatch({ type: 'reset', scenario: event.target.value as ScenarioId })}>
+                    {Object.entries(scenarios).map(([id, scenario]) => <option key={id} value={id}>{scenario.name}</option>)}
+                  </select>
+                  <ChevronDown size={16} aria-hidden="true" />
+                </div>
+              </div>
+            </div>
+
+            <ShopItems store={store} stock={stock} disabled={Boolean(order) || restoring}
+              onAdd={add} onSelect={setSelected} />
+          </div>
+        )}
+
+        <footer className="footer">
+          <span><Leaf size={14} aria-hidden="true" /> Wasteoff</span>
+          <span>실험용 상품과 가상 예산을 사용합니다.</span>
+        </footer>
       </main>
-      <Footer />
+
+      {selected && <ProductDialog product={getProduct(selected)} store={store}
+        onClose={() => setSelected(undefined)} onAdd={add} />}
+      {auth && <SignInDialog create={auth === 'create'} onClose={() => setAuth(undefined)}
+        onSignIn={signedIn => { setAccount(signedIn); setAuth(undefined); announce(signedIn.name + '님으로 입장했어요.'); }} />}
+      <div className={'notice' + (notice ? ' notice--shown' : '')} role="status">
+        {notice && <><Check size={16} aria-hidden="true" />{notice}</>}
+      </div>
     </>
   );
 }
