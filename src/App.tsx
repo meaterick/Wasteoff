@@ -1,241 +1,261 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRight, BarChart3, Box, Check, ChevronDown, Clock3, Leaf, LogIn, LogOut, ShoppingBasket, Store as StoreIcon, Wallet,
+  ArrowRight, ArrowUpRight, BarChart3, BottleWine, ChevronRight, Clock3, DoorOpen, Flame, Leaf, LogIn, LogOut,
+  Minus, Package, ScanLine, ShoppingBasket, Snowflake, Store as StoreIcon, Wallet,
 } from 'lucide-react';
-import { Checkout } from './Checkout';
-import { Results } from './Results';
-import { ProductDialog, ShopItems } from './ShopItems';
-import { SignInDialog } from './SignInDialog';
-import { applyParticipantAction, restoreSignIn, signOut, type SignIn } from './participants';
+import { departments, getItem, items, type Department, type Destination, type Item } from './catalog';
 import {
-  budgetBalance, cartSummary, closingStep, closingTime, getProduct, newStore, offerStock,
-  openingBudget, pendingOrder, scenarios, times, won,
-  type Action, type ProductId, type ScenarioId,
+  budgetBalance, canRestart, closingStep, newStore, pendingOrder, registerState, registerTotals, scenarios, shelfStock, times, won,
+  type Action, type ScenarioId,
 } from './model';
+import { applyParticipantAction, restoreSignIn, signOut, type SignIn } from './participants';
+import { Results } from './Results';
+import { SignInDialog } from './SignInDialog';
+import { ItemDialog, Packaging, PosDialog, ShelfDialog } from './StoreDialogs';
+import type { Navigation } from './WalkStage';
+import type { CameraMode } from './market/view';
+import type { Target } from './market/world';
 
-const StoreScene = lazy(() => import('./StoreScene'));
-const guestStore = newStore('typical');
+const WalkStage = lazy(() => import('./WalkStage'));
+const guest = newStore('typical');
+const departmentIcon = { fresh: Snowflake, rescue: Leaf, snacks: Package, noodles: Flame, drinks: BottleWine, freezer: Snowflake };
+
+type Panel = { kind: 'shelf'; department: Department } | { kind: 'item'; item: Item } | { kind: 'pos' };
 
 export default function App() {
   const [account, setAccount] = useState<SignIn>();
-  const [restoring, setRestoring] = useState(true);
+  const [ready, setReady] = useState(false);
   const [view, setView] = useState<'shop' | 'results'>('shop');
-  const [selected, setSelected] = useState<ProductId>();
+  const [mode, setMode] = useState<CameraMode>('first');
+  const [panel, setPanel] = useState<Panel>();
   const [auth, setAuth] = useState<'create' | 'signIn'>();
+  const [navigation, setNavigation] = useState<Navigation>();
   const [notice, setNotice] = useState('');
-  const noticeTimer = useRef<number>();
-  const actions = useRef(Promise.resolve());
+  const notices = useRef<number>();
+  const operations = useRef<Promise<unknown>>(Promise.resolve());
   const leaving = useRef(false);
-  const cart = useRef<HTMLElement>(null);
-
-  const store = account?.store ?? guestStore;
-  const closed = store.step === closingStep;
-  const order = pendingOrder(store);
-  const cartCount = cartSummary(store).count;
-  const stock = useMemo(() => offerStock(store), [store]);
+  const stage = useRef<HTMLElement>(null);
+  const store = account?.store ?? guest;
+  const totals = registerTotals(store);
+  const clock = times[store.step];
+  const inventory = useMemo(() => {
+    const { basket } = registerState(store);
+    return Object.fromEntries(items.map(item => [item.sku, Math.max(0, shelfStock(store, item) - (basket[item.sku] ?? 0))]));
+  }, [store]);
 
   useEffect(() => {
-    let mounted = true;
+    let active = true;
     async function resume() {
       try {
         const restored = await restoreSignIn();
-        if (mounted) setAccount(restored);
+        if (active) setAccount(restored);
       } catch {
-        if (mounted) setNotice('브라우저의 참가 기록을 불러오지 못했어요.');
+        if (active) setNotice('참가 기록을 불러오지 못했어요.');
       } finally {
-        if (mounted) setRestoring(false);
+        if (active) setReady(true);
       }
     }
     void resume();
     window.addEventListener('focus', resume);
     return () => {
-      mounted = false;
+      active = false;
       window.removeEventListener('focus', resume);
-      window.clearTimeout(noticeTimer.current);
+      window.clearTimeout(notices.current);
     };
   }, []);
 
-  function announce(message: string) {
+  function notify(message: string) {
     setNotice(message);
-    window.clearTimeout(noticeTimer.current);
-    noticeTimer.current = window.setTimeout(() => setNotice(''), 3000);
+    window.clearTimeout(notices.current);
+    notices.current = window.setTimeout(() => setNotice(''), 2700);
   }
 
-  function dispatch(action: Action) {
-    if (!account || leaving.current) return;
-    actions.current = actions.current.then(async () => {
+  function act(action: Action) {
+    if (!account || leaving.current) {
+      if (ready && !leaving.current) setAuth('create');
+      return Promise.resolve(false);
+    }
+    const operation = operations.current.then(async () => {
       try {
         const result = await applyParticipantAction(action);
         setAccount(result?.account);
         if (!result) {
-          announce('다시 로그인해 주세요.');
           setAuth('signIn');
-        } else if (action.type === 'add' && result.changed) {
-          announce(getProduct(action.id).name + '을(를) 담았어요.');
-        } else if (action.type === 'checkout' && !result.changed) {
-          announce('잔액과 담은 수량을 확인해 주세요.');
+          return false;
         }
+        if (action.type === 'basket-add' && result.changed) notify(getItem(action.sku)?.name + '을(를) 담았어요.');
+        return result.changed;
       } catch {
-        announce('변경 내용을 저장하지 못했어요. 다시 시도해 주세요.');
+        notify('변경을 저장하지 못했어요. 다시 시도해 주세요.');
+        return false;
       }
     });
+    operations.current = operation;
+    return operation;
   }
 
   async function exit() {
     if (leaving.current) return;
     leaving.current = true;
     try {
-      await actions.current;
+      await operations.current;
       await signOut();
       setAccount(undefined);
-      setView('shop');
-      announce('로그아웃했어요.');
+      setPanel(undefined);
+      notify('로그아웃했어요.');
     } catch {
       setAccount(undefined);
-      announce('브라우저의 로그인 상태를 정리하지 못했어요.');
+      notify('로그아웃 상태를 저장하지 못했어요.');
     } finally {
       leaving.current = false;
     }
   }
 
   function navigate(next: typeof view) {
-    if (next === view) return;
     setView(next);
-    setSelected(undefined);
+    setPanel(undefined);
     window.scrollTo({ top: 0 });
   }
 
-  function showCart() {
-    cart.current?.scrollIntoView({ block: 'nearest' });
-    cart.current?.focus({ preventScroll: true });
+  function go(destination: Destination) {
+    setNavigation(previous => ({ destination, sequence: (previous?.sequence ?? 0) + 1 }));
   }
 
-  function add(id: ProductId) {
-    if (!account) {
-      setSelected(undefined);
-      setAuth('create');
-    } else {
-      dispatch({ type: 'add', id });
+  function visit(destination: Destination) {
+    go(destination);
+    if (destination === 'register') setPanel({ kind: 'pos' });
+    else if (destination !== 'entrance') setPanel({ kind: 'shelf', department: destination });
+  }
+
+  const inspect = useCallback((target: Target) => {
+    if (target.type === 'item') {
+      const item = getItem(target.sku);
+      if (item) setPanel({ kind: 'item', item });
+    } else if (target.id === 'register') {
+      setPanel({ kind: 'pos' });
+    } else if (target.id !== 'entrance') {
+      setPanel({ kind: 'shelf', department: target.id });
     }
+  }, []);
+
+  function closePanel() {
+    setPanel(undefined);
+    requestAnimationFrame(() => stage.current?.querySelector('canvas')?.focus({ preventScroll: true }));
   }
 
-  const resultView = view === 'results';
+  const add = (item: Item) => { void act({ type: 'basket-add', sku: item.sku }); };
+  const showShop = view === 'shop';
 
   return (
     <>
       <a href="#main" className="skip-link">본문으로 건너뛰기</a>
-      <header className="header">
-        <div className="shell header-inner">
-          <button type="button" className="brand" aria-label="Wasteoff 매장 체험" onClick={() => navigate('shop')}>
-            <span className="brand-icon"><Leaf size={20} strokeWidth={2.2} aria-hidden="true" /></span>
-            <span>Wasteoff<span className="brand-period">.</span></span>
+      <header className="masthead">
+        <div className="shell masthead-inner">
+          <button type="button" className="wordmark" onClick={() => navigate('shop')} aria-label="Wasteoff 매장으로">
+            <span className="logo-tile"><Leaf size={21} strokeWidth={2.3} aria-hidden="true" /></span><span>Wasteoff<span>.</span></span>
           </button>
-          <nav className="view-nav" aria-label="실험 화면">
-            <button type="button" aria-current={resultView ? undefined : 'page'} onClick={() => navigate('shop')}>
-              <StoreIcon size={17} aria-hidden="true" /> 매장 체험
-            </button>
-            <button type="button" aria-current={resultView ? 'page' : undefined} onClick={() => navigate('results')}>
-              <BarChart3 size={17} aria-hidden="true" /> 효과 비교
-            </button>
+          <nav className="nav-mode" aria-label="실험 화면">
+            <button type="button" aria-current={showShop ? 'page' : undefined} onClick={() => navigate('shop')}><StoreIcon size={17} /> 매장 체험</button>
+            <button type="button" aria-current={!showShop ? 'page' : undefined} onClick={() => navigate('results')}><BarChart3 size={17} /> 운영·비교</button>
           </nav>
-          <div className="header-actions">
-            {!resultView && <button type="button" className="header-cart icon-button" aria-label={`장바구니 보기 (${cartCount}개)`} onClick={showCart}>
-              <ShoppingBasket size={19} aria-hidden="true" />
-              {cartCount > 0 && <span className="basket-badge">{cartCount}</span>}
-            </button>}
+          <div className="masthead-account">
             {account ? (
-              <div className="account-menu">
-                <span className="account-name">{account.name}</span>
-                <button type="button" className="icon-button" title="로그아웃" aria-label="로그아웃" onClick={() => void exit()}><LogOut size={17} /></button>
-              </div>
-            ) : (
-              <button type="button" className="button button-secondary header-login" disabled={restoring} onClick={() => setAuth('signIn')}>
-                <LogIn size={16} aria-hidden="true" /> 로그인
-              </button>
-            )}
+              <><span className="participant-name">{account.name}</span>
+                <button type="button" className="icon-button" title="로그아웃" aria-label="로그아웃" onClick={() => void exit()}><LogOut size={17} /></button></>
+            ) : <button className="button button-secondary" type="button" disabled={!ready} onClick={() => setAuth('signIn')}><LogIn size={16} /> 로그인</button>}
           </div>
         </div>
       </header>
 
       <main className="shell main" id="main">
-        <div className="intro">
-          <div className="intro-copy">
-            <p className="eyebrow"><span /> WASTEOFF STORE LAB</p>
-            <h1>{resultView ? '마감 판매의 효과' : '마감 한 시간 전'}<span>.</span></h1>
-            <p>{resultView
-              ? '같은 재고와 손님 수요로 일반 판매와 Wasteoff의 마감 결과를 비교해요.'
-              : '3D 편의점을 둘러보고, 한정된 예산으로 오늘 남을 상품을 골라보세요.'}</p>
+        <div className="page-head">
+          <div>
+            <h1>{showShop ? '편의점 체험' : '매장 운영과 마감 효과'}</h1>
+            <p>{showShop ? '진열대를 둘러보고, 상품을 골라 계산대에서 결제하세요.' : '마감 간편식의 재고와 일반 판매 대비 효과를 확인하세요.'}</p>
           </div>
-          <div className="run-tools">
-            <div className="balance-card">
-              <span className="balance-icon"><Wallet size={19} aria-hidden="true" /></span>
-              <div><span>{account ? '남은 가상 예산' : '참가자 시작 예산'}</span><strong>{won(account ? budgetBalance(store) : openingBudget)}</strong></div>
-            </div>
-            {!resultView && (
-              <div className="time-card">
-                <Clock3 size={19} aria-hidden="true" />
-                <div><span>매장 시각</span><strong>{times[store.step]}</strong></div>
-                {closed ? <span className="closed-label">마감</span> : (
-                  <button className="advance" type="button" onClick={() => account ? dispatch({ type: 'advance' }) : setAuth('create')}>
-                    {store.step === closingStep - 1 ? '마감하기' : '15분 진행'} <ArrowRight size={14} aria-hidden="true" />
-                  </button>
-                )}
-              </div>
-            )}
+          <div className="status-cards">
+            <div className="status-capsule"><Clock3 size={18} /><span>매장 시각<strong>{clock}</strong></span></div>
+            <div className="status-capsule status-capsule--balance"><Wallet size={19} /><span>{account ? '남은 예산' : '가상 시작 예산'}<strong>{won(budgetBalance(store))}</strong></span></div>
           </div>
         </div>
 
-        {resultView ? (
-          <Results store={store} participant={account?.name} onShop={() => navigate('shop')}
-            onClose={() => dispatch({ type: 'close' })} onReset={() => dispatch({ type: 'reset', scenario: store.scenario })} />
-        ) : (
-          <div className="shop-layout">
-            <section className="market-stage" aria-label="3D 편의점">
-              <div className="stage-top">
-                <span className="stage-label"><Box size={16} aria-hidden="true" /> 3D 편의점</span>
-                <span className={'stage-status' + (closed ? ' stage-status--closed' : '')}>
-                  <span className="status-dot" /> {closed ? '판매 종료' : closingTime + ' 픽업 마감'}
-                </span>
+        <div className="store-layout" hidden={!showShop}>
+          <section className="viewport" aria-label="3D 편의점" ref={stage}>
+            <Suspense fallback={<div className="walk-stage scene-unavailable" role="status"><StoreIcon size={26} /> 매장에 입장하는 중…</div>}>
+              <WalkStage mode={mode} onMode={setMode} onInspect={inspect} inventory={inventory}
+                carrying={totals.count > 0} clock={clock} paused={!showShop || !!panel || !!auth} navigation={navigation} />
+            </Suspense>
+          </section>
+
+          <aside className="store-rail" aria-label="매장 안내와 장바구니">
+            <section className="rail-section" aria-labelledby="guide-heading">
+              <div className="rail-title"><h2 id="guide-heading">매장 안내</h2>
+                <button type="button" className="icon-button entry-button" title="입구로 이동" aria-label="입구로 이동" onClick={() => visit('entrance')}><DoorOpen size={16} /></button>
               </div>
-              <Suspense fallback={<div className="scene-message" role="status"><StoreIcon size={30} /><strong>매장을 준비하고 있어요</strong></div>}>
-                <StoreScene stock={stock} waitingForPickup={Boolean(order)}
-                  onSelect={target => { if (target === 'register') showCart(); else setSelected(target); }} />
-              </Suspense>
+              <div className="map-buttons">
+                {departments.map(({ id, name }) => {
+                  const Icon = departmentIcon[id];
+                  return <button type="button" key={id} className={id === 'rescue' ? 'map-rescue' : ''} onClick={() => visit(id)}>
+                    <Icon size={16} aria-hidden="true" />{name}<ChevronRight size={14} aria-hidden="true" />
+                  </button>;
+                })}
+              </div>
             </section>
-
-            <div className="shop-side">
-              <Checkout store={store} stock={stock} host={cart} dispatch={dispatch} onAdd={add}
-                onResults={() => navigate('results')} signedIn={Boolean(account)} onLogin={() => setAuth('create')} />
-              <div className="scenario-control">
-                <label htmlFor="scenario">일반 손님 수요</label>
-                <div className="select-shell">
-                  <select id="scenario" value={store.scenario} disabled={!account || closed || store.step !== 0 || store.orders.length > 0 || cartCount > 0}
-                    onChange={event => dispatch({ type: 'reset', scenario: event.target.value as ScenarioId })}>
-                    {Object.entries(scenarios).map(([id, scenario]) => <option key={id} value={id}>{scenario.name}</option>)}
-                  </select>
-                  <ChevronDown size={16} aria-hidden="true" />
+            <section className="rail-section basket-panel" aria-labelledby="basket-heading">
+              <div className="rail-title"><ShoppingBasket size={18} aria-hidden="true" /><h2 id="basket-heading">장바구니</h2><span className="count-badge">{totals.count}</span></div>
+              {totals.count === 0 ? (
+                <div className="basket-empty"><span className="basket-glyph"><ShoppingBasket size={23} strokeWidth={1.65} /></span>
+                  <strong>장바구니가 비어 있어요</strong>
+                  <span>매장에서 상품을 골라 담아보세요.</span>
                 </div>
-              </div>
-            </div>
+              ) : (
+                <ul className="rail-basket">
+                  {totals.lines.map(({ item, quantity }) => <li key={item.sku}>
+                    <Packaging item={item} /><span><strong>{item.name}</strong><small>{won(item.price)} × {quantity}</small></span>
+                    <button type="button" className="icon-button" aria-label={item.name + ' 장바구니에서 1개 빼기'}
+                      onClick={() => void act({ type: 'basket-remove', sku: item.sku })}><Minus size={15} /></button>
+                  </li>)}
+                </ul>
+              )}
+              {pendingOrder(store) && <p className="held-order">계산대에서 수령할 주문이 있어요.</p>}
+              <div className="basket-total"><span>결제 예정</span><strong>{won(totals.charged)}</strong></div>
+              <button className="button button-primary button-wide" type="button" onClick={() => visit('register')}>
+                <ScanLine size={18} aria-hidden="true" /> 계산대로 이동 <ArrowUpRight size={16} aria-hidden="true" />
+              </button>
+            </section>
+            {!account && <button type="button" className="button button-secondary signup" disabled={!ready} onClick={() => setAuth('create')}>
+              참가자 계정 만들기 <ArrowRight size={16} aria-hidden="true" />
+            </button>}
+          </aside>
+        </div>
 
-            <ShopItems store={store} stock={stock} disabled={Boolean(order) || restoring}
-              onAdd={add} onSelect={setSelected} />
-          </div>
+        {!showShop && (
+          <>
+            <section className="ops" aria-label="실험 조건">
+              <label>일반 손님 수요<select value={store.scenario} disabled={!account || store.step !== 0 || totals.count > 0 || !canRestart(store)}
+                onChange={event => void act({ type: 'reset', scenario: event.target.value as ScenarioId })}>
+                {Object.entries(scenarios).map(([id, scenario]) => <option value={id} key={id}>{scenario.name}</option>)}
+              </select></label>
+              <p>23:00에 임박 간편식 판매가 끝납니다. 일반 상품은 계속 구매할 수 있어요.</p>
+              {store.step < closingStep && <button className="button button-secondary" type="button" onClick={() => void act({ type: 'advance' })}>
+                <Clock3 size={17} /> 15분 진행
+              </button>}
+            </section>
+            <Results store={store} participant={account?.name} onShop={() => navigate('shop')}
+              onClose={() => void act({ type: 'close' })} onReset={() => void act({ type: 'reset', scenario: store.scenario })} />
+          </>
         )}
-
-        <footer className="footer">
-          <span><Leaf size={14} aria-hidden="true" /> Wasteoff</span>
-          <span>실험용 상품과 가상 예산을 사용합니다.</span>
-        </footer>
+        <footer className="footer"><span>WASTEOFF MART</span><span>가상 재고와 예산으로 진행하는 편의점 체험</span></footer>
       </main>
 
-      {selected && <ProductDialog product={getProduct(selected)} store={store}
-        onClose={() => setSelected(undefined)} onAdd={add} />}
+      {panel?.kind === 'shelf' && <ShelfDialog department={panel.department} store={store} onClose={closePanel} onAdd={add}
+        onInspect={item => setPanel({ kind: 'item', item })} />}
+      {panel?.kind === 'item' && <ItemDialog item={panel.item} store={store} onClose={closePanel} onAdd={add}
+        onBack={() => setPanel({ kind: 'shelf', department: panel.item.department })} />}
+      {panel?.kind === 'pos' && <PosDialog store={store} onAction={act} signedIn={!!account} onClose={closePanel} onLogin={() => setAuth('create')} />}
       {auth && <SignInDialog create={auth === 'create'} onClose={() => setAuth(undefined)}
-        onSignIn={signedIn => { setAccount(signedIn); setAuth(undefined); announce(signedIn.name + '님으로 입장했어요.'); }} />}
-      <div className={'notice' + (notice ? ' notice--shown' : '')} role="status">
-        {notice && <><Check size={16} aria-hidden="true" />{notice}</>}
-      </div>
+        onSignIn={signedIn => { setAccount(signedIn); setAuth(undefined); notify(signedIn.name + '님으로 입장했어요.'); }} />}
+      <span className={'notice' + (notice ? ' notice--shown' : '')} role="status">{notice}</span>
     </>
   );
 }
