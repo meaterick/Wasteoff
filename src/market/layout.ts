@@ -16,11 +16,12 @@ export const fixtures: Record<Department, Rectangle & { rotation: number }> = {
 };
 
 export const counter: Rectangle = { x: 4.55, z: 4.04, width: 3.44, depth: 1.05, height: 1.18 };
+export const service: Rectangle = { x: -5.88, z: 3.43, width: 0.83, depth: 2.20, height: 1.43 };
 export const fixturesOutside = [
-  { x: -5.88, z: 3.43, width: 0.83, depth: 2.2, height: 1.43 },
   { x: -4.60, z: 5.80, width: 2.18, depth: 0.64, height: 0.99 },
   { x: 5.65, z: 5.91, width: 0.84, depth: 0.79, height: 1.02 },
   { x: -3.40, z: 8.49, width: 1.70, depth: 0.54, height: 0.89 },
+  { x: 4.52, z: 8.71, width: 1.67, depth: 0.33, height: 0.99 },
 ];
 
 export const destinations: Record<Destination, Pose> = {
@@ -32,10 +33,11 @@ export const destinations: Record<Destination, Pose> = {
   noodles: { x: 0.72, z: -0.11, yaw: Math.PI / 2 },
   freezer: { x: 4.45, z: -1.53, yaw: Math.PI / 2 },
   register: { x: 4.48, z: 2.58, yaw: Math.PI },
+  service: { x: -4.44, z: 3.42, yaw: -Math.PI / 2 },
 };
 
 export const colliders: Rectangle[] = [
-  ...Object.values(fixtures), counter, ...fixturesOutside,
+  ...Object.values(fixtures), counter, service, ...fixturesOutside,
   { x: -3.85, z: room.front, width: 5.50, depth: 0.20, height: room.ceiling },
   { x: 3.85, z: room.front, width: 5.50, depth: 0.20, height: room.ceiling },
 ];

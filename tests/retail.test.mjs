@@ -95,3 +95,33 @@ test('shelves, till and storefront block movement but the entry is walkable', ()
   assert.equal(walk(nearShelf, -.13, .08).x, nearShelf.x);
   assert.equal(walk(nearShelf, -.13, .08).z, .08);
 });
+
+test('1+1 discounts every second qualifying unit and is recorded on the receipt', () => {
+  let store = newStore('typical');
+  for (let index = 0; index < 3; index++) store = scan(add(store, 'grape'), 'grape');
+  const checked = card(store);
+  assert.equal(latest(checked).discount, 1600);
+  assert.equal(latest(checked).charged, 3200);
+  assert.equal(budgetBalance(checked), 6800);
+});
+
+test('the self-service station accepts paid items once and preserves the running preparation across sales', () => {
+  const start = (store, receipt = 'POS-001') => updateStore(store, { type: 'service-start', receipt, sku: 'ramen', now: 100 });
+  const finish = (store, now) => updateStore(store, { type: 'service-finish', now });
+  const initial = scan(add(newStore('typical'), 'ramen'), 'ramen');
+  assert.equal(start(initial), initial);
+  const paid = card(initial);
+  let running = start(paid);
+  assert.equal(registerState(running).preparation.ends, 5100);
+  assert.equal(finish(running, 5099), running);
+  assert.equal(start(running), running);
+  assert.equal(updateStore(running, { type: 'pos-refund', number: 'POS-001' }), running);
+  running = card(scan(add(running, 'water'), 'water'));
+  assert.ok(registerState(running).preparation);
+  const finished = finish(running, 5100);
+  assert.equal(registerState(finished).preparation, undefined);
+  assert.equal(registerState(finished).receipts[0].prepared.ramen, 1);
+  assert.equal(start(finished), finished);
+  assert.equal(updateStore(finished, { type: 'pos-refund', number: 'POS-001' }), finished);
+  assert.equal(budgetBalance(running), budgetBalance(finished));
+});

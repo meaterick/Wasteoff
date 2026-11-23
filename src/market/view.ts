@@ -1,21 +1,20 @@
 import * as THREE from 'three';
-import { getItem } from '../catalog';
-import type { Destination } from '../catalog';
-import { cameraClear, colliders, destinations, fixtures, room, walk, type Pose } from './layout';
+import { departments, getItem, type Destination } from '../catalog';
+import type { StoreCue } from '../storeSound';
+import { advancePlayer, angleDifference, clearCameraFraction, damp, stickVector, type Vector } from './controls';
+import { colliders, counter, destinations, fixtures, room, service, type Pose } from './layout';
 import { buildWorld, type Target } from './world';
 
 export type CameraMode = 'first' | 'third';
 export type Movement = 'forward' | 'back' | 'left' | 'right';
-type Keys = Record<Movement, string[]>;
-const moveKeys: Keys = {
-  forward: ['KeyW', 'ArrowUp'], back: ['KeyS', 'ArrowDown'],
-  left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
+export type ViewPreferences = { sensitivity: number; fov: number; reduceMotion: boolean };
+const moveKeys: Record<Movement, string[]> = {
+  forward: ['KeyW', 'ArrowUp'], back: ['KeyS', 'ArrowDown'], left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
 };
-const navigationKeys = new Set(Object.values(moveKeys).flat().concat('KeyE', 'ShiftLeft', 'ShiftRight', 'KeyV'));
-const reach = 2.60;
-const interactables = Object.entries(fixtures).map(([id, fixture]) => ({
-  id: id as Destination, x: fixture.x, z: fixture.z, width: fixture.width, depth: fixture.depth,
-}));
+const navigationKeys = new Set(Object.values(moveKeys).flat().concat('KeyE', 'ShiftLeft', 'ShiftRight', 'KeyV', 'KeyQ'));
+const reach = 2.55;
+const interactables = Object.entries({ ...fixtures, register: counter, service }).map(([id, rect]) => ({ ...rect, id: id as Destination }));
+const zero: Vector = { x: 0, z: 0 };
 
 type Options = {
   canvas: HTMLCanvasElement;
@@ -23,44 +22,53 @@ type Options = {
   onAim: (target: Target | null) => void;
   onInspect: (target: Target) => void;
   onMode: () => void;
+  onPose: (pose: Pose) => void;
+  onLock: (locked: boolean) => void;
+  onCue: (cue: StoreCue) => void;
+  onReady: () => void;
   onLost: () => void;
 };
 
 function targetId(target: Target | null) {
-  if (!target) return '';
-  return target.type === 'item' ? target.sku : target.id;
+  return target?.type === 'item' ? target.sku : target?.id ?? '';
 }
 
-export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onLost }: Options) {
+export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onPose, onLock, onCue, onReady, onLost }: Options) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.55));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.shadowMap.autoUpdate = false;
   renderer.shadowMap.needsUpdate = true;
   renderer.toneMapping = THREE.NeutralToneMapping;
-  renderer.toneMappingExposure = 1.03;
+  renderer.toneMappingExposure = 1.08;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color('#111c28');
-  scene.fog = new THREE.Fog('#182530', 21, 41);
-  scene.add(new THREE.HemisphereLight('#fffaf0', '#bcc5b9', 1.54));
-  const overhead = new THREE.DirectionalLight('#fff9eb', 2.05);
-  overhead.position.set(-1.8, 7, 3.6);
+  scene.background = new THREE.Color('#101d31');
+  scene.fog = new THREE.Fog('#172435', 17, 41);
+  scene.add(new THREE.HemisphereLight('#f6f8ff', '#737e73', 1.24));
+  const overhead = new THREE.DirectionalLight('#fff7e5', 1.45);
+  overhead.position.set(-3, 7.2, 1.4);
   overhead.castShadow = true;
   overhead.shadow.mapSize.set(1536, 1536);
   Object.assign(overhead.shadow.camera, { left: -9, right: 9, top: 9, bottom: -9, near: .50, far: 22 });
-  overhead.shadow.normalBias = .021;
-  overhead.shadow.bias = -.00030;
-  overhead.shadow.radius = 2;
+  overhead.shadow.normalBias = .042;
+  overhead.shadow.bias = -.00026;
   scene.add(overhead);
-  const fill = new THREE.DirectionalLight('#c6dce2', .48);
+  const fill = new THREE.DirectionalLight('#b2d1ed', .51);
   fill.position.set(4, 3.3, -6);
   scene.add(fill);
+  for (const [x, z, intensity] of [[-.3, -4.65, 25], [3.7, 3.5, 21], [-3.2, .65, 18], [.5, 7.3, 26]]) {
+    const source = new THREE.SpotLight(z > 5 ? '#b5dbf7' : '#fff6e4', intensity, 8, .98, .82, 2);
+    source.position.set(x, z > 5 ? 3.66 : 3.18, z);
+    source.target.position.set(x, 0, z + .24);
+    scene.add(source, source.target);
+  }
 
   let dirty = true;
   const world = buildWorld(scene, () => { dirty = true; });
-  const camera = new THREE.PerspectiveCamera(61, 1, .055, 47);
+  const camera = new THREE.PerspectiveCamera(61, 1, .045, 50);
+  scene.add(camera);
+  camera.add(world.heldBasket);
   const position: Pose = { ...destinations.entrance };
   const ray = new THREE.Raycaster();
   const cursor = new THREE.Vector2();
@@ -70,45 +78,66 @@ export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onLost 
   ));
   const hitPoint = new THREE.Vector3();
   const keys = new Set<string>();
-  const touch = new Set<Movement>();
+  const directions = new Set<Movement>();
+  let preferences: ViewPreferences = { sensitivity: 1, fov: 62, reduceMotion: false };
   let mode: CameraMode = 'first';
-  let pitch = -.052;
+  let pitch = -.075;
+  let viewPitch = pitch;
+  let yaw = position.yaw;
+  let bodyYaw = yaw;
+  let shoulder = 1;
+  let shoulderOffset = .46;
+  let boom = 1;
   let paused = false;
   let carrying = false;
+  let turnReset = true;
+  let velocity = zero;
+  let joystick = zero;
   let doorOpen = 1;
-  let movingLast = false;
-  let phase = 0;
+  let previousOpen = true;
+  let gait = 0;
+  let cadence = 0;
+  let stride = 0;
   let last = 0;
   let animation = 0;
   let aimed: Target | null = null;
   let disposed = false;
+  let ready = false;
   let drag: { id: number; x: number; y: number; distance: number } | undefined;
 
-  const has = (direction: Movement) => touch.has(direction) || moveKeys[direction].some(key => keys.has(key));
+  const held = (direction: Movement) => directions.has(direction) || moveKeys[direction].some(key => keys.has(key));
 
-  function projectCamera() {
-    const fx = Math.sin(position.yaw);
-    const fz = -Math.cos(position.yaw);
-    const pitchCos = Math.cos(pitch);
-    const eye = 1.63;
+  function projectCamera(dt: number) {
+    const fx = Math.sin(yaw);
+    const fz = -Math.cos(yaw);
+    const eye = 1.64 + (preferences.reduceMotion ? 0 : Math.sin(gait * 2) * stride * .021);
+    let changing = false;
     if (mode === 'first') {
+      const cos = Math.cos(viewPitch);
       camera.position.set(position.x, eye, position.z);
-      camera.lookAt(position.x + fx * pitchCos, eye + Math.sin(pitch), position.z + fz * pitchCos);
+      camera.lookAt(position.x + fx * cos, eye + Math.sin(viewPitch), position.z + fz * cos);
     } else {
-      const camY = 2.40;
-      const shoulderX = -fz * .34;
-      const shoulderZ = fx * .34;
-      let distance = .53;
-      for (let candidate = .64; candidate <= 2.64; candidate += .14) {
-        const x = position.x - fx * candidate + shoulderX;
-        const z = position.z - fz * candidate + shoulderZ;
-        if (!cameraClear(x, z, camY) || (position.z < room.front - .3 && z > room.front - .15)) break;
-        distance = candidate;
-      }
-      camera.position.set(position.x - fx * distance + shoulderX, camY, position.z - fz * distance + shoulderZ);
-      camera.lookAt(position.x + fx * 1.4, eye + Math.sin(pitch) * 3.8 - .16, position.z + fz * 1.4);
+      const anchor = { x: position.x, y: 1.69, z: position.z };
+      shoulderOffset = preferences.reduceMotion || turnReset ? shoulder * .46 : damp(shoulderOffset, shoulder * .46, 12, dt);
+      const endpoint = {
+        x: position.x - fx * 2.70 - fz * shoulderOffset,
+        y: 2.35 + Math.sin(viewPitch) * .12,
+        z: position.z - fz * 2.70 + fx * shoulderOffset,
+      };
+      const limit = clearCameraFraction(anchor, endpoint);
+      const next = turnReset || limit < boom || preferences.reduceMotion ? limit : damp(boom, limit, 8.2, dt);
+      changing = Math.abs(next - boom) > .0002 || Math.abs(shoulderOffset - shoulder * .46) > .001;
+      boom = next;
+      camera.position.set(
+        THREE.MathUtils.lerp(anchor.x, endpoint.x, boom),
+        THREE.MathUtils.lerp(anchor.y, endpoint.y, boom),
+        THREE.MathUtils.lerp(anchor.z, endpoint.z, boom),
+      );
+      camera.lookAt(position.x + fx * 1.85, 1.32 + Math.sin(viewPitch) * 4.2, position.z + fz * 1.85);
     }
+    turnReset = false;
     camera.updateMatrixWorld();
+    return changing;
   }
 
   function hitAt(x: number, y: number) {
@@ -116,25 +145,22 @@ export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onLost 
     ray.setFromCamera(cursor, camera);
     for (const hit of ray.intersectObjects(world.targets, false)) {
       if (Math.hypot(hit.point.x - position.x, hit.point.z - position.z) > reach) continue;
-      const target = hit.object.userData.target as Target;
       if (blockedSpace.some(box => ray.ray.intersectBox(box, hitPoint)
-        && hitPoint.distanceTo(ray.ray.origin) + 0.11 < hit.distance)) continue;
-      return target;
+        && hitPoint.distanceTo(ray.ray.origin) + .12 < hit.distance)) continue;
+      return hit.object.userData.target as Target;
     }
     return null;
   }
 
   function nearby(): Target | null {
-    const register = destinations.register;
-    if (Math.hypot(position.x - register.x, position.z - register.z) < 1.12) return { type: 'area', id: 'register' };
-    const fx = Math.sin(position.yaw);
-    const fz = -Math.cos(position.yaw);
+    const fx = Math.sin(yaw);
+    const fz = -Math.cos(yaw);
     let candidate: Destination | undefined;
-    let nearest = 1.37;
+    let nearest = 1.24;
     for (const area of interactables) {
       const dx = area.x - position.x;
       const dz = area.z - position.z;
-      if (dx * fx + dz * fz < .12) continue;
+      if (dx * fx + dz * fz < .16) continue;
       const range = Math.hypot(Math.max(0, Math.abs(dx) - area.width / 2), Math.max(0, Math.abs(dz) - area.depth / 2));
       if (range < nearest) {
         nearest = range;
@@ -144,24 +170,34 @@ export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onLost 
     return candidate ? { type: 'area', id: candidate } : null;
   }
 
+  function clearControls() {
+    keys.clear();
+    directions.clear();
+    joystick = zero;
+    velocity = zero;
+    drag = undefined;
+  }
+
   function choose(target = aimed) {
     if (paused || !target) return;
     if (document.pointerLockElement === canvas) document.exitPointerLock();
-    keys.clear();
-    touch.clear();
+    clearControls();
     onInspect(target);
   }
 
+  let size = { width: 0, height: 0 };
   function resize() {
-    const width = viewport.clientWidth;
-    const height = viewport.clientHeight;
+    const { clientWidth: width, clientHeight: height } = viewport;
+    size = { width, height };
     if (!width || !height) return;
     const aspect = width / height;
-    camera.aspect = aspect;
-    camera.fov = aspect < .92 ? 72 : 61;
-    dirty = true;
-    camera.updateProjectionMatrix();
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.65, Math.sqrt(1_800_000 / (width * height)));
+    renderer.setPixelRatio(pixelRatio);
     renderer.setSize(width, height, false);
+    camera.aspect = aspect;
+    camera.fov = preferences.fov + (aspect < .92 ? 8 : 0);
+    camera.updateProjectionMatrix();
+    dirty = true;
   }
   const observer = new ResizeObserver(resize);
   observer.observe(viewport);
@@ -170,96 +206,123 @@ export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onLost 
   function frame(time: number) {
     if (disposed) return;
     animation = requestAnimationFrame(frame);
-    const dt = Math.min((time - (last || time)) / 1000, .04);
+    const dt = Math.min((time - (last || time)) / 1000, .077);
     last = time;
-    if (!viewport.clientWidth || document.hidden) return;
+    if (!size.width || document.hidden) return;
 
-    const forward = paused ? 0 : Number(has('forward')) - Number(has('back'));
-    const side = paused ? 0 : Number(has('right')) - Number(has('left'));
-    const magnitude = Math.hypot(forward, side);
-    let walking = 0;
-    if (magnitude) {
-      const sprint = keys.has('ShiftLeft') || keys.has('ShiftRight');
-      const step = (sprint ? 3.66 : 2.20) * dt / magnitude;
-      const sin = Math.sin(position.yaw);
-      const cos = Math.cos(position.yaw);
-      const next = walk(position, (sin * forward + cos * side) * step, (-cos * forward + sin * side) * step);
-      walking = Number(next.x !== position.x || next.z !== position.z);
-      position.x = next.x;
-      position.z = next.z;
-      phase += dt * (sprint ? 12 : 8);
+    const lookDelta = angleDifference(yaw, position.yaw);
+    const pitchDelta = pitch - viewPitch;
+    const looking = Math.abs(lookDelta) > .0004 || Math.abs(pitchDelta) > .0004;
+    if (looking) {
+      const blend = preferences.reduceMotion ? 1 : 1 - Math.exp(-40 * dt);
+      yaw += lookDelta * blend;
+      viewPitch += pitchDelta * blend;
     }
-    const openTarget = Math.abs(position.x) < 1.85 && Math.abs(position.z - room.front) < 2.05 ? 1 : 0;
-    const nextDoor = Math.abs(openTarget - doorOpen) < .012 ? openTarget
-      : doorOpen + (openTarget - doorOpen) * (1 - Math.exp(-8 * dt));
+
+    const ix = Number(held('right')) - Number(held('left')) + joystick.x;
+    const iz = Number(held('forward')) - Number(held('back')) + joystick.z;
+    const ratio = Math.max(1, Math.hypot(ix, iz));
+    const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight')) && iz >= 0 ? 3.56 : 2.28;
+    const forward = iz / ratio * speed * (iz < 0 ? .78 : 1);
+    const sideways = ix / ratio * speed * .92;
+    const sin = Math.sin(yaw);
+    const cos = Math.cos(yaw);
+    const wanted = paused ? zero : { x: forward * sin + sideways * cos, z: -forward * cos + sideways * sin };
+    const movement = advancePlayer(position, velocity, wanted, dt);
+    velocity = movement.velocity;
+    position.x = movement.position.x;
+    position.z = movement.position.z;
+    const walking = movement.distance > .00015;
+    if (walking) {
+      gait += movement.distance * 5.26;
+      cadence += movement.distance;
+      if (cadence >= .61) { cadence -= .61; onCue('step'); }
+    }
+    const strideGoal = walking ? Math.min(1.15, movement.distance / Math.max(dt, .001) / 2.10) : 0;
+    const pastStride = stride;
+    stride = damp(stride, strideGoal, 13, dt);
+    const walkYaw = mode === 'third' && walking ? Math.atan2(velocity.x, -velocity.z) : yaw;
+    bodyYaw += angleDifference(bodyYaw, walkYaw) * (1 - Math.exp(-13 * dt));
+
+    const wantsDoor = Math.abs(position.x) < 1.83 && Math.abs(position.z - room.front) < 1.93;
+    const goal = Number(wantsDoor);
+    if (wantsDoor !== previousOpen) {
+      previousOpen = wantsDoor;
+      if (wantsDoor && ready && !turnReset) onCue('door');
+    }
+    const nextDoor = Math.abs(goal - doorOpen) < .008 ? goal : damp(doorOpen, goal, 8, dt);
     const doorMoving = nextDoor !== doorOpen;
     doorOpen = nextDoor;
-    if (!dirty && !walking && !movingLast && !doorMoving) return;
-    movingLast = Boolean(walking);
-    dirty = false;
+    if (!dirty && !looking && !walking && Math.abs(stride - pastStride) < .0003 && !doorMoving) return;
+    dirty = projectCamera(dt);
     world.setDoor(doorOpen);
-    projectCamera();
-    world.player.object.visible = mode === 'third';
+    world.player.object.visible = mode === 'third' && boom > .17;
     world.player.object.position.set(position.x, 0, position.z);
-    world.player.object.rotation.y = -position.yaw;
-    world.player.pose(phase, walking, carrying);
-    world.playerShadow.visible = mode === 'third';
-    world.playerShadow.position.set(position.x, .008, position.z);
+    world.player.object.rotation.y = -bodyYaw;
+    world.player.pose(gait, stride, carrying, preferences.reduceMotion);
+    world.playerShadow.visible = world.player.object.visible;
+    world.playerShadow.position.set(position.x, .006, position.z);
+    world.heldBasket.visible = mode === 'first' && carrying;
+    world.heldBasket.position.set(Math.min(.44, camera.aspect * .37),
+      -.48 + Math.sin(gait) * stride * (preferences.reduceMotion ? 0 : .023), -1.03);
     const target = paused ? null : hitAt(0, 0) ?? nearby();
     if (targetId(target) !== targetId(aimed)) {
       aimed = target;
+      world.highlight(target);
       onAim(target);
     }
+    onPose({ x: position.x, z: position.z, yaw });
     renderer.render(scene, camera);
+    if (!ready) { ready = true; onReady(); }
   }
   scene.updateMatrixWorld(true);
-  projectCamera();
   animation = requestAnimationFrame(frame);
-
-  function clearControls() {
-    keys.clear();
-    touch.clear();
-  }
 
   function keyDown(event: KeyboardEvent) {
     if (!navigationKeys.has(event.code) || paused) return;
     if (document.activeElement !== canvas && document.activeElement !== document.body && document.pointerLockElement !== canvas) return;
     event.preventDefault();
-    if (event.code === 'KeyE') {
-      if (!event.repeat) choose();
-      return;
-    }
-    if (event.code === 'KeyV') {
-      if (!event.repeat) onMode();
-      return;
-    }
-    keys.add(event.code);
+    if (event.code === 'KeyE') { if (!event.repeat) choose(); }
+    else if (event.code === 'KeyV') { if (!event.repeat) onMode(); }
+    else if (event.code === 'KeyQ') { if (!event.repeat) { shoulder *= -1; dirty = true; } }
+    else keys.add(event.code);
   }
-  function keyUp(event: KeyboardEvent) { keys.delete(event.code); }
 
-  function look(dx: number, dy: number, speed: number) {
+  function keyUp(event: KeyboardEvent) { keys.delete(event.code); }
+  function lockChanged() {
+    const locked = document.pointerLockElement === canvas;
+    onLock(locked);
+    if (!locked) clearControls();
+  }
+
+  function look(dx: number, dy: number, scale: number) {
+    const speed = scale * preferences.sensitivity;
     position.yaw += dx * speed;
+    pitch = THREE.MathUtils.clamp(pitch - dy * speed, -.91, .70);
     dirty = true;
-    pitch = THREE.MathUtils.clamp(pitch - dy * speed, -.89, .67);
   }
 
   function pointerDown(event: PointerEvent) {
-    if (paused || !event.isPrimary || event.button !== 0) return;
+    if (paused || event.button !== 0 || drag) return;
     canvas.focus({ preventScroll: true });
     drag = { id: event.pointerId, x: event.clientX, y: event.clientY, distance: 0 };
-    canvas.setPointerCapture(event.pointerId);
+    if (document.pointerLockElement !== canvas) canvas.setPointerCapture(event.pointerId);
   }
 
   function pointerMove(event: PointerEvent) {
-    if (!paused && document.pointerLockElement === canvas) {
-      look(event.movementX, event.movementY, .0027);
-    } else if (!paused && drag?.id === event.pointerId) {
+    if (paused) return;
+    if (document.pointerLockElement === canvas) {
+      const dx = event.movementX;
+      const dy = event.movementY;
+      if (drag) drag.distance += Math.abs(dx) + Math.abs(dy);
+      look(dx, dy, .0025);
+    } else if (drag?.id === event.pointerId) {
       const dx = event.clientX - drag.x;
       const dy = event.clientY - drag.y;
       drag.x = event.clientX;
       drag.y = event.clientY;
       drag.distance += Math.abs(dx) + Math.abs(dy);
-      if (drag.distance > 3) look(dx, dy, event.pointerType === 'touch' ? .0052 : .0041);
+      look(dx, dy, event.pointerType === 'touch' ? .0047 : .0038);
     }
   }
 
@@ -267,19 +330,18 @@ export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onLost 
     if (event.pointerId !== drag?.id) return;
     const distance = drag.distance;
     drag = undefined;
-    if (event.type !== 'pointerup' || distance > 7) return;
-    if (document.pointerLockElement === canvas) {
-      choose();
-      return;
-    }
-    const bounds = canvas.getBoundingClientRect();
-    const target = hitAt((event.clientX - bounds.left) * 2 / bounds.width - 1, 1 - (event.clientY - bounds.top) * 2 / bounds.height);
+    if (event.type !== 'pointerup' || distance > 8) return;
+    if (document.pointerLockElement === canvas) { choose(); return; }
+    const rect = canvas.getBoundingClientRect();
+    const target = hitAt((event.clientX - rect.left) * 2 / rect.width - 1, 1 - (event.clientY - rect.top) * 2 / rect.height);
     if (target) choose(target);
   }
 
   addEventListener('keydown', keyDown);
   addEventListener('keyup', keyUp);
   addEventListener('blur', clearControls);
+  document.addEventListener('visibilitychange', clearControls);
+  document.addEventListener('pointerlockchange', lockChanged);
   canvas.addEventListener('blur', clearControls);
   canvas.addEventListener('webglcontextlost', onLost);
   canvas.addEventListener('pointerdown', pointerDown);
@@ -291,12 +353,20 @@ export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onLost 
   return {
     go(destination: Destination) {
       Object.assign(position, destinations[destination]);
-      dirty = true;
-      pitch = destination === 'freezer' ? -.33 : destination === 'register' ? -.15 : -.052;
+      yaw = bodyYaw = position.yaw;
+      pitch = viewPitch = destination === 'freezer' ? -.34 : destination === 'register' || destination === 'service' ? -.18 : -.075;
+      turnReset = dirty = true;
       clearControls();
       canvas.focus({ preventScroll: true });
     },
-    changeCamera(next: CameraMode) { mode = next; dirty = true; },
+    changeCamera(next: CameraMode) {
+      mode = next;
+      turnReset = dirty = true;
+    },
+    setPreferences(next: ViewPreferences) {
+      preferences = next;
+      resize();
+    },
     setPaused(next: boolean) {
       paused = next;
       dirty = true;
@@ -305,19 +375,26 @@ export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onLost 
         if (document.pointerLockElement === canvas) document.exitPointerLock();
       }
     },
-    setInventory(next: Record<string, number>, basket: boolean) {
-      carrying = basket;
+    setInventory(next: Record<string, number>, basket: Record<string, number>) {
+      carrying = Object.values(basket).some(count => count > 0);
       world.setStock(next);
+      world.setBasket(basket);
       dirty = true;
     },
-    move(direction: Movement, held: boolean) {
-      if (held) touch.add(direction);
-      else touch.delete(direction);
+    setRegister(scanned: number, count: number, charge: number) {
+      world.setRegister(scanned, count, charge);
+      dirty = true;
     },
+    move(direction: Movement, pressed: boolean) {
+      if (pressed) directions.add(direction);
+      else directions.delete(direction);
+    },
+    setJoystick(x: number, z: number) { joystick = stickVector(x, z); },
     interact() { choose(); },
     async lock() {
       canvas.focus({ preventScroll: true });
-      try { await canvas.requestPointerLock(); } catch { /* Dragging still controls the view. */ }
+      if (document.pointerLockElement === canvas) { document.exitPointerLock(); return; }
+      try { await canvas.requestPointerLock(); } catch { /* Browsers can continue to use drag controls. */ }
     },
     dispose() {
       if (disposed) return;
@@ -328,6 +405,8 @@ export function mountWorld({ canvas, viewport, onAim, onInspect, onMode, onLost 
       removeEventListener('keydown', keyDown);
       removeEventListener('keyup', keyUp);
       removeEventListener('blur', clearControls);
+      document.removeEventListener('visibilitychange', clearControls);
+      document.removeEventListener('pointerlockchange', lockChanged);
       canvas.removeEventListener('blur', clearControls);
       canvas.removeEventListener('webglcontextlost', onLost);
       canvas.removeEventListener('pointerdown', pointerDown);
@@ -346,5 +425,6 @@ export function aimLabel(target: Target | null) {
   if (!target) return '';
   if (target.type === 'item') return getItem(target.sku)?.name ?? '';
   if (target.id === 'register') return '계산대';
-  return '';
+  if (target.id === 'service') return '셀프 코너';
+  return departments.find(department => department.id === target.id)?.name ?? '';
 }
