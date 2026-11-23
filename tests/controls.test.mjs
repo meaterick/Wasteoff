@@ -2,6 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { advancePlayer, angleDifference, clearCameraFraction, stickVector } from '../src/market/controls.ts';
 import { canStand, fixtures } from '../src/market/layout.ts';
+import { renderRatio } from '../src/market/quality.ts';
+
+test('render profiles cap desktop and mobile pixel density and only auto changes with measured load', () => {
+  const physicalSize = (width, height, ratio) => width * height * ratio ** 2;
+  const desktop = renderRatio(1920, 1080, 2, false, 'auto');
+  assert.ok(physicalSize(1920, 1080, desktop) <= 1_550_001);
+  assert.ok(renderRatio(390, 844, 3, true, 'auto') < renderRatio(390, 844, 3, true, 'detail'));
+  assert.equal(renderRatio(390, 844, 3, true, 'smooth', .65), renderRatio(390, 844, 3, true, 'smooth'));
+  assert.equal(renderRatio(390, 844, 3, true, 'auto', .8), 1);
+});
 
 test('analog movement has a dead zone, proportional speed and no diagonal bonus', () => {
   assert.deepEqual(stickVector(.05, .07), { x: 0, z: 0 });

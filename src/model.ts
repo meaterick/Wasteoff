@@ -1,4 +1,4 @@
-import { getItem, items, lookupBarcode, products, type Item, type Preparation, type ProductId } from './catalog.ts';
+import { bundles, getItem, items, lookupBarcode, preparations, products, type Item, type ProductId } from './catalog.ts';
 export { products, type Product, type ProductId } from './catalog.ts';
 import type { Product } from './catalog.ts';
 
@@ -75,6 +75,7 @@ export type Store = {
 type Basket = Record<string, number>;
 export type Payment = 'card' | 'cash';
 export type ReceiptLine = { sku: string; quantity: number; price: number; discount: number };
+type BundleDiscount = { id: string; name: string; count: number; discount: number };
 export type Receipt = {
   number: string;
   time: string;
@@ -90,9 +91,9 @@ export type Receipt = {
   change: number;
   refunded?: boolean;
   prepared?: Basket;
+  bundles?: BundleDiscount[];
 };
 
-export const preparationTime = { microwave: 12_000, 'hot-water': 5_000 } satisfies Record<Preparation, number>;
 type PreparationJob = { receipt: string; sku: string; started: number; ends: number };
 
 type Register = {
@@ -323,6 +324,25 @@ export function pointReward(store: Store, item: Item) {
   return item.rescue ? rewardPoints(store.scenario, getProduct(item.rescue)) : 0;
 }
 
+function applyBundles(lines: { item: Item; quantity: number; discount: number }[]) {
+  const applied: BundleDiscount[] = [];
+  for (const bundle of bundles) {
+    const drinks = lines.filter(line => bundle.drink.includes(line.item.sku));
+    const foodCount = lines.reduce((sum, line) => sum + (bundle.food.includes(line.item.sku) ? line.quantity : 0), 0);
+    const drinkCount = drinks.reduce((sum, line) => sum + line.quantity, 0);
+    const count = Math.min(foodCount, drinkCount);
+    if (!count) continue;
+    let remaining = count;
+    for (const line of drinks) {
+      const paired = Math.min(line.quantity, remaining);
+      line.discount += paired * bundle.discount;
+      remaining -= paired;
+    }
+    applied.push({ id: bundle.id, name: bundle.name, count, discount: count * bundle.discount });
+  }
+  return applied;
+}
+
 export function registerTotals(store: Store) {
   const { basket, scanned, usePoints } = registerState(store);
   const lines = items.flatMap(item => {
@@ -335,11 +355,12 @@ export function registerTotals(store: Store) {
   const count = lines.reduce((sum, line) => sum + line.quantity, 0);
   const scanCount = lines.reduce((sum, line) => sum + line.scanned, 0);
   const subtotal = lines.reduce((sum, line) => sum + line.quantity * line.price, 0);
+  const bundles = applyBundles(lines);
   const discount = lines.reduce((sum, line) => sum + line.discount, 0);
   const rescueSubtotal = lines.reduce((sum, line) => sum + (line.item.rescue ? line.quantity * line.price : 0), 0);
   const usedPoints = usePoints ? Math.min(pointsBalance(store), rescueSubtotal) : 0;
   const reward = lines.reduce((sum, line) => sum + pointReward(store, line.item) * line.quantity, 0);
-  return { lines, count, scanCount, subtotal, discount, rescueSubtotal, usedPoints, reward, charged: subtotal - discount - usedPoints };
+  return { lines, count, scanCount, subtotal, discount, bundles, rescueSubtotal, usedPoints, reward, charged: subtotal - discount - usedPoints };
 }
 
 export function eligiblePreparations(store: Store) {
@@ -417,6 +438,7 @@ function updateRegister(store: Store, action: RegisterAction): Store {
         subtotal: totals.subtotal, discount: totals.discount, usedPoints: totals.usedPoints, charged: totals.charged,
         regularCharged: totals.charged - totals.rescueSubtotal + totals.usedPoints, reward: totals.reward,
         method: action.method, tendered, change: tendered - totals.charged,
+        ...(totals.bundles.length ? { bundles: totals.bundles } : {}),
       };
       const rescueLines = totals.lines.flatMap(line => line.item.rescue ? [{ id: line.item.rescue, quantity: line.quantity }] : []);
       const orders = rescueLines.length ? [...store.orders, {
@@ -438,7 +460,7 @@ function updateRegister(store: Store, action: RegisterAction): Store {
       if (!eligible) return store;
       return setRegister(store, {
         ...register,
-        preparation: { receipt: action.receipt, sku: action.sku, started: action.now, ends: action.now + preparationTime[eligible.method] },
+        preparation: { receipt: action.receipt, sku: action.sku, started: action.now, ends: action.now + preparations[eligible.method].seconds * 1000 },
       });
     }
     case 'service-finish': {

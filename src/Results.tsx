@@ -1,6 +1,7 @@
 import { ArrowDownRight, ArrowRight, BarChart3, CircleHelp, Coins, Download, RotateCcw, ShoppingBasket, Trash2, type LucideIcon } from 'lucide-react';
+import { departments, getItem } from './catalog';
 import {
-  approvedQuantity, budgetBalance, canRestart, closingStep, closingTime, compare, disposalCostPerUnit, openingBudget, pendingOrder, scenarios, won,
+  approvedQuantity, budgetBalance, canRestart, closingStep, closingTime, compare, disposalCostPerUnit, openingBudget, pendingOrder, registerState, scenarios, won,
   type Store,
 } from './model';
 
@@ -21,6 +22,35 @@ function Metric({ label, value, change, trend, icon: Icon }: {
       <strong className="metric-value">{value}</strong>
       <span className={'metric-change metric-change--' + trend}>{change}</span>
     </article>
+  );
+}
+
+function PurchaseSummary({ store }: { store: Store }) {
+  const receipts = registerState(store).receipts.filter(receipt => !receipt.refunded);
+  if (!receipts.length) return null;
+  const units = new Map<string, number>();
+  let charged = 0;
+  let discount = 0;
+  for (const receipt of receipts) {
+    charged += receipt.charged;
+    discount += receipt.discount;
+    for (const line of receipt.lines) {
+      const item = getItem(line.sku);
+      if (item) units.set(item.department, (units.get(item.department) ?? 0) + line.quantity);
+    }
+  }
+  return (
+    <section className="result-panel purchase-summary" aria-labelledby="purchase-summary-title">
+      <div className="result-panel-title"><ShoppingBasket size={19} aria-hidden="true" /><h2 id="purchase-summary-title">내 계산대 구매 기록</h2></div>
+      <dl className="purchase-figures">
+        <div><dt>결제 횟수</dt><dd>{receipts.length}회</dd></div>
+        <div><dt>결제 합계</dt><dd>{won(charged)}</dd></div>
+        <div><dt>행사 할인</dt><dd>{won(discount)}</dd></div>
+      </dl>
+      <ul className="purchased-zones" aria-label="구매한 코너별 상품 수">
+        {departments.filter(zone => units.has(zone.id)).map(zone => <li key={zone.id}>{zone.name} <strong>{unit(units.get(zone.id) ?? 0)}</strong></li>)}
+      </ul>
+    </section>
   );
 }
 
@@ -86,7 +116,7 @@ export function Results({ store, participant, onShop, onClose, onReset }: {
       {pickup && <p className="result-note">수령 대기 중인 {pickup.number} 주문은 마감까지 수령하지 않으면 취소돼요.</p>}
       {!wasteoff.rescued && !completed && (
         <p className="result-note result-note--action">
-          매장에서 상품을 구매하고 수령하면 결과에 반영돼요.
+          마감 간편식을 구매하면 폐기 비교에 반영돼요.
           <button className="text-button" type="button" onClick={onShop}>매장으로 이동 <ArrowRight size={15} /></button>
         </p>
       )}
@@ -172,6 +202,7 @@ export function Results({ store, participant, onShop, onClose, onReset }: {
           </details>
         </section>
       </div>
+      {participant && <PurchaseSummary store={store} />}
     </div>
   );
 }

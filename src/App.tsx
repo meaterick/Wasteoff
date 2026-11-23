@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRight, ArrowUpRight, BarChart3, BottleWine, ChevronRight, Clock3, DoorOpen, Flame, Leaf, LogIn, LogOut,
-  Microwave, Minus, Package, ScanLine, ShoppingBasket, Snowflake, Store as StoreIcon, Wallet,
+  ArrowRight, ArrowUpRight, BarChart3, BottleWine, ChevronRight, Clock3, Croissant, DoorOpen, Flame, Leaf, LogIn, LogOut,
+  Microwave, Package, ScanLine, Search, ShoppingBag, ShoppingBasket, Snowflake, Store as StoreIcon, Wallet,
 } from 'lucide-react';
 import { departments, getItem, items, type Department, type Destination, type Item } from './catalog';
 import {
@@ -11,7 +11,7 @@ import {
 import { applyParticipantAction, restoreSignIn, signOut, type SignIn } from './participants';
 import { Results } from './Results';
 import { SignInDialog } from './SignInDialog';
-import { ItemDialog, Packaging, PosDialog, ServiceDialog, ShelfDialog } from './StoreDialogs';
+import { BasketDialog, BasketDiscounts, BasketItems, CatalogDialog, ItemDialog, PosDialog, ServiceDialog, ShelfDialog, type ProductFilters } from './StoreDialogs';
 import { useStoreSound } from './storeSound';
 import type { Navigation } from './WalkStage';
 import type { CameraMode } from './market/view';
@@ -19,9 +19,13 @@ import type { Target } from './market/world';
 
 const WalkStage = lazy(() => import('./WalkStage'));
 const guest = newStore('typical');
-const departmentIcon = { fresh: Snowflake, rescue: Leaf, snacks: Package, noodles: Flame, drinks: BottleWine, freezer: Snowflake };
+const departmentIcon = {
+  fresh: Snowflake, rescue: Leaf, snacks: Package, noodles: Flame, drinks: BottleWine, freezer: Snowflake,
+  bakery: Croissant, daily: ShoppingBag,
+};
 
-type Panel = { kind: 'shelf'; department: Department } | { kind: 'item'; item: Item } | { kind: 'pos' } | { kind: 'service' };
+type Panel = { kind: 'shelf'; department: Department } | { kind: 'item'; item: Item; fromSearch?: boolean }
+  | { kind: 'pos' | 'service' | 'search' | 'basket' };
 
 export default function App() {
   const [account, setAccount] = useState<SignIn>();
@@ -29,6 +33,7 @@ export default function App() {
   const [view, setView] = useState<'shop' | 'results'>('shop');
   const [mode, setMode] = useState<CameraMode>('first');
   const [panel, setPanel] = useState<Panel>();
+  const [filters, setFilters] = useState<ProductFilters>({ query: '', onSale: false });
   const [auth, setAuth] = useState<'create' | 'signIn'>();
   const [navigation, setNavigation] = useState<Navigation>();
   const [notice, setNotice] = useState('');
@@ -39,8 +44,10 @@ export default function App() {
   const sound = useStoreSound();
   const store = account?.store ?? guest;
   const { basket, preparation: cooking } = useMemo(() => registerState(store), [store]);
-  const totals = registerTotals(store);
+  const totals = useMemo(() => registerTotals(store), [store]);
   const clock = times[store.step];
+  const balance = budgetBalance(store);
+  const showShop = view === 'shop';
   const inventory = useMemo(() => Object.fromEntries(
     items.map(item => [item.sku, Math.max(0, shelfStock(store, item) - (basket[item.sku] ?? 0))]),
   ), [store, basket]);
@@ -65,6 +72,18 @@ export default function App() {
       window.clearTimeout(notices.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!showShop || panel || auth) return;
+    function shortcut(event: KeyboardEvent) {
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.target instanceof HTMLElement && event.target.closest('input, select, textarea, [contenteditable]')) return;
+      event.preventDefault();
+      setPanel({ kind: 'search' });
+    }
+    window.addEventListener('keydown', shortcut);
+    return () => window.removeEventListener('keydown', shortcut);
+  }, [showShop, panel, auth]);
 
   function notify(message: string) {
     setNotice(message);
@@ -162,7 +181,6 @@ export default function App() {
   }
 
   const add = (item: Item) => { void act({ type: 'basket-add', sku: item.sku }); };
-  const showShop = view === 'shop';
 
   return (
     <>
@@ -193,7 +211,7 @@ export default function App() {
           </div>
           <div className="status-cards">
             <div className="status-capsule"><Clock3 size={18} /><span>매장 시각<strong>{clock}</strong></span></div>
-            <div className="status-capsule status-capsule--balance"><Wallet size={19} /><span>{account ? '남은 예산' : '가상 시작 예산'}<strong>{won(budgetBalance(store))}</strong></span></div>
+            <div className="status-capsule status-capsule--balance"><Wallet size={19} /><span>{account ? '남은 예산' : '가상 시작 예산'}<strong>{won(balance)}</strong></span></div>
           </div>
         </div>
 
@@ -203,7 +221,9 @@ export default function App() {
               <WalkStage mode={mode} onMode={setMode} onInspect={inspect} inventory={inventory}
                 basket={basket} clock={clock} paused={!showShop || !!panel || !!auth} navigation={navigation}
                 sound={sound.enabled} onSound={() => void sound.toggle()} onCue={sound.play}
-                scanned={totals.scanCount} count={totals.count} charge={totals.charged} />
+                scanned={totals.scanCount} count={totals.count} charge={totals.charged}
+                preparation={cooking ? getItem(cooking.sku)?.preparation : undefined}
+                onSearch={() => setPanel({ kind: 'search' })} />
             </Suspense>
           </section>
 
@@ -212,6 +232,9 @@ export default function App() {
               <div className="rail-title"><h2 id="guide-heading">매장 안내</h2>
                 <button type="button" className="icon-button entry-button" title="입구로 이동" aria-label="입구로 이동" onClick={() => visit('entrance')}><DoorOpen size={16} /></button>
               </div>
+              <button type="button" className="catalog-trigger" onClick={() => setPanel({ kind: 'search' })}>
+                <Search size={18} aria-hidden="true" /> 상품 검색 <kbd aria-hidden="true">/</kbd>
+              </button>
               <div className="map-buttons">
                 {departments.map(({ id, name }) => {
                   const Icon = departmentIcon[id];
@@ -221,26 +244,14 @@ export default function App() {
                 })}
               </div>
               <button type="button" className="service-shortcut" onClick={() => visit('service')}>
-                <Microwave size={17} aria-hidden="true" /><span>셀프 코너</span><small>{cooking ? '준비 중' : '전자레인지 · 온수'}</small><ChevronRight size={15} aria-hidden="true" />
+                <Microwave size={17} aria-hidden="true" /><span>셀프 코너</span><small>{cooking ? '준비 중' : '가열 · 온수 · 커피'}</small><ChevronRight size={15} aria-hidden="true" />
               </button>
             </section>
             <section className="rail-section basket-panel" aria-labelledby="basket-heading">
               <div className="rail-title"><ShoppingBasket size={18} aria-hidden="true" /><h2 id="basket-heading">장바구니</h2><span className="count-badge">{totals.count}</span></div>
-              {totals.count === 0 ? (
-                <div className="basket-empty"><span className="basket-glyph"><ShoppingBasket size={23} strokeWidth={1.65} /></span>
-                  <strong>장바구니가 비어 있어요</strong>
-                  <span>매장에서 상품을 골라 담아보세요.</span>
-                </div>
-              ) : (
-                <ul className="rail-basket">
-                  {totals.lines.map(({ item, quantity }) => <li key={item.sku}>
-                    <Packaging item={item} /><span><strong>{item.name}</strong><small>{won(item.price)} × {quantity}</small></span>
-                    <button type="button" className="icon-button" aria-label={item.name + ' 장바구니에서 1개 빼기'}
-                      onClick={() => void act({ type: 'basket-remove', sku: item.sku })}><Minus size={15} /></button>
-                  </li>)}
-                </ul>
-              )}
+              <BasketItems totals={totals} store={store} onAction={act} />
               {pendingOrder(store) && <p className="held-order">계산대에서 수령할 주문이 있어요.</p>}
+              <BasketDiscounts totals={totals} />
               <div className="basket-total"><span>결제 예정</span><strong>{won(totals.charged)}</strong></div>
               <button className="button button-primary button-wide" type="button" onClick={() => visit('register')}>
                 <ScanLine size={18} aria-hidden="true" /> 계산대로 이동 <ArrowUpRight size={16} aria-hidden="true" />
@@ -251,6 +262,14 @@ export default function App() {
             </button>}
           </aside>
         </div>
+
+        {showShop && <nav className="shop-dock" aria-label="빠른 장보기">
+          <button className="dock-icon" type="button" aria-label="상품 검색 열기" onClick={() => setPanel({ kind: 'search' })}><Search size={21} /></button>
+          <button className="dock-basket" type="button" aria-label="장바구니 열기" onClick={() => setPanel({ kind: 'basket' })}>
+            <ShoppingBasket size={21} /><span><small>장바구니 {totals.count}개</small><strong>{won(totals.charged)}</strong></span>
+          </button>
+          <button className="button button-primary" type="button" onClick={() => visit('register')}><ScanLine size={18} /> 계산대</button>
+        </nav>}
 
         {!showShop && (
           <>
@@ -273,8 +292,11 @@ export default function App() {
 
       {panel?.kind === 'shelf' && <ShelfDialog department={panel.department} store={store} onClose={closePanel} onAdd={add}
         onInspect={item => setPanel({ kind: 'item', item })} />}
-      {panel?.kind === 'item' && <ItemDialog item={panel.item} store={store} onClose={closePanel} onAdd={add}
-        onBack={() => setPanel({ kind: 'shelf', department: panel.item.department })} />}
+      {panel?.kind === 'search' && <CatalogDialog filters={filters} onFilters={setFilters} store={store} onClose={closePanel} onAdd={add}
+        onInspect={item => { go(item.department); setPanel({ kind: 'item', item, fromSearch: true }); }} />}
+      {panel?.kind === 'item' && <ItemDialog item={panel.item} fromSearch={panel.fromSearch} store={store} onClose={closePanel} onAdd={add}
+        onBack={() => setPanel(panel.fromSearch ? { kind: 'search' } : { kind: 'shelf', department: panel.item.department })} />}
+      {panel?.kind === 'basket' && <BasketDialog store={store} onAction={act} onCheckout={() => visit('register')} onClose={closePanel} />}
       {panel?.kind === 'pos' && <PosDialog store={store} onAction={act} signedIn={!!account}
         onClose={closePanel} onLogin={() => setAuth('create')} onCue={sound.play} />}
       {panel?.kind === 'service' && <ServiceDialog store={store} onAction={act} onClose={closePanel} />}

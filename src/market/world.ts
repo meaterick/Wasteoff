@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import atlasUrl from '../assets/package-labels.webp';
-import { departments, items, type Destination, type Item } from '../catalog';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { departments, items, type Destination, type Item, type Preparation } from '../catalog';
+import { packageArt } from '../packageArt';
 import { makeAvatar, makeBasket } from './avatar';
 import { loadSurfaces } from './materials';
 import { counter, fixtures, room, service } from './layout';
@@ -30,6 +31,7 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
   const shades = coat('#a9b3a5');
   const lateShelf = coat('#bd8747', { roughness: 0.51 });
   const shelfWhite = coat('#e4e8dc', { roughness: 0.45 });
+  const wood = coat('#aa8d6d', { map: surface('wood'), roughness: .53 });
   const light = coat('#fafaf0', { emissive: '#fff7e3', emissiveIntensity: 0.82 });
   const glass = keep(new THREE.MeshPhysicalMaterial({
     color: '#b8d4d1', metalness: 0.18, roughness: 0.12, transparent: true, opacity: 0.18, depthWrite: false, clearcoat: 0.7,
@@ -38,6 +40,7 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
   const stocks = new Map<string, Stocked>();
   const products = new Map<string, ProductPart[]>();
   const hitMat = flat({ visible: false });
+  const staticParts: THREE.Mesh<THREE.BufferGeometry, THREE.Material>[] = [];
 
   function put(geometry: THREE.BufferGeometry, material: THREE.Material, position: P, parent: THREE.Object3D = scene) {
     const mesh = new THREE.Mesh(geometry, material);
@@ -52,6 +55,7 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
     const mesh = put(keep(geometry), material, position, parent);
     mesh.castShadow = cast && !material.transparent;
     mesh.receiveShadow = !material.transparent;
+    if (material.visible && !material.transparent) staticParts.push(mesh);
     return mesh;
   }
 
@@ -263,17 +267,25 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
   box(.21, .045, .088, tread, [-.26, .859, 0], bike, .02);
 
 
-  const atlas = keep(new THREE.TextureLoader().load(atlasUrl, onTexturesReady, undefined, onTexturesReady));
-  atlas.colorSpace = THREE.SRGBColorSpace;
-  atlas.anisotropy = 4;
+  const atlases = new Map<string, THREE.Texture>();
+  const loader = new THREE.TextureLoader();
   const packageMaps = new Map<number, THREE.Texture>();
   function mapFor(item: Item) {
-    if (item.art < 0) return keep(labelMap(item));
     const existing = packageMaps.get(item.art);
     if (existing) return existing;
+    const art = packageArt(item.art);
+    if (!art) return keep(labelMap(item));
+    let atlas = atlases.get(art.url);
+    if (!atlas) {
+      atlas = keep(loader.load(art.url, onTexturesReady, undefined, onTexturesReady));
+      atlas.colorSpace = THREE.SRGBColorSpace;
+      atlas.anisotropy = 4;
+      atlases.set(art.url, atlas);
+    }
     const texture = keep(atlas.clone());
-    texture.repeat.set(.2475, .3298);
-    texture.offset.set(item.art % 4 / 4 + .00125, (2 - Math.floor(item.art / 4)) / 3 + .0017);
+    const inset = .006;
+    texture.repeat.set((1 - 2 * inset) / art.columns, (1 - 2 * inset) / art.rows);
+    texture.offset.set((art.x + inset) / art.columns, (art.rows - 1 - art.y + inset) / art.rows);
     texture.needsUpdate = true;
     packageMaps.set(item.art, texture);
     return texture;
@@ -360,8 +372,9 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
     const freezer = department.id === 'freezer';
     const cool = department.id === 'drinks' || department.id === 'fresh' || department.id === 'rescue';
     const late = department.id === 'rescue';
-    const frame = late ? lateShelf : pine;
-    const levels = freezer ? [.85] : cool ? [.29, .71, 1.13, 1.55] : [.26, .58, .90, 1.22];
+    const baked = department.id === 'bakery';
+    const frame = late ? lateShelf : baked ? wood : pine;
+    const levels = freezer ? [.77] : cool ? [.29, .71, 1.13, 1.55] : baked ? [.31, .70, 1.09] : [.26, .58, .90, 1.22];
     const { height } = layout;
 
     box(w, .17, d, frame, [0, .097, 0], g, .026);
@@ -377,11 +390,12 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
       box(w, cool ? .24 : .17, d, frame, [0, height - .09, 0], g, .022);
       sign(department.label, department.name, Math.min(w - .2, 2.8), cool ? .203 : .141,
         [-Math.max(0, (w - 2.98) / 2), height - .084, d / 2 + .006], g,
-        late ? '#b5793d' : '#264b3c', '#f4f1dd');
+        late ? '#b5793d' : baked ? '#624631' : '#264b3c', '#f4f1dd');
     }
     if (cool) {
-      for (let column = 1; column < merch.length; column++) {
-        const x = (column / merch.length - .5) * (w - .15);
+      const doorCount = department.id === 'drinks' ? 4 : 3;
+      for (let column = 1; column < doorCount; column++) {
+        const x = (column / doorCount - .5) * (w - .15);
         box(.048, height - .31, .048, steel, [x, height / 2 - .05, d / 2 - .033], g, .008);
         if (department.id === 'drinks') {
           box(.034, .62, .072, steel, [x + .075, 1.04, d / 2 + .038], g, .014);
@@ -394,7 +408,7 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
     }
 
     for (const y of levels) {
-      box(w - .17, .062, d - .087, shelfWhite, [0, y, 0], g, .014);
+      box(w - .17, .062, d - .087, baked ? wood : shelfWhite, [0, y, 0], g, .014);
       box(w - .184, .060, .045, steel, [0, y - .009, d / 2 - .031], g, .01);
       if (cool) box(w - .20, .019, .041, light, [0, y + .026, d / 2 - .085], g, 0, false);
     }
@@ -403,10 +417,10 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
     merch.forEach((item, index) => {
       const center = (index - (merch.length - 1) / 2) * bayWidth;
       const [itemW] = sizeFor[item.form];
-      const slotsAcross = Math.max(2, Math.floor((freezer ? 2.0 : bayWidth - .07) / (itemW + .021)));
+      const slotsAcross = Math.max(1, Math.floor((bayWidth - .05) / (itemW + .025)));
       const placements: P[] = [];
       const levelOrder = [...levels].sort((a, b) => Math.abs(a - 1.11) - Math.abs(b - 1.11));
-      const setbacks = freezer || cool ? [.174, .406] : [.165, .321];
+      const setbacks = freezer ? [.174, .37, .57] : cool ? [.174, .406] : [.165, .321];
       for (const setback of setbacks) {
         for (const y of levelOrder) {
           for (let i = 0; i < slotsAcross; i++) {
@@ -416,7 +430,8 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
         }
       }
       stock(item, g, placements, item.form !== 'tray' && item.form !== 'roll' && item.form !== 'bar');
-      for (const y of levels) panel(.267, .098, flat({ map: keep(priceMap(item)) }), [center, y - .015, d / 2 - .004], g);
+      const price = flat({ map: keep(priceMap(item)) });
+      for (const y of levels) panel(.267, .098, price, [center, freezer ? y - .186 : y - .015, d / 2 + (freezer ? .006 : -.004)], g);
       fixtureTarget(bayWidth - .085, freezer ? .33 : height - .30, .10,
         freezer ? .91 : height / 2 - .025, d / 2 + .013, { type: 'item', sku: item.sku }, g, center);
     });
@@ -432,16 +447,22 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
       const frost = keep(new THREE.MeshPhysicalMaterial({
         color: '#a5bfba', roughness: .17, opacity: .104, transparent: true, depthWrite: false,
       }));
-      for (let i = 0; i < merch.length; i++) {
-        const x = (i - (merch.length - 1) / 2) * bayWidth;
-        box(bayWidth - .049, height - .395, .024, frost, [x, 1.073, d / 2 + .017], g, .008, false);
+      for (let i = 0; i < 4; i++) {
+        const x = (i - 1.5) * (w - .15) / 4;
+        box((w - .15) / 4 - .049, height - .395, .024, frost, [x, 1.073, d / 2 + .017], g, .008, false);
       }
+    }
+    if (baked) {
+      box(w - .12, .028, .037, light, [0, height - .173, d / 2 - .103], g, 0, false);
+      const promo = sign('COFFEE + BREAD', '함께 담으면 500원 할인', 1.13, .26, [.28, height + .22, -.25], g, '#eee1c8', '#503b2b');
+      promo.rotation.x = -.08;
+      box(1.22, .29, .05, wood, [.28, height + .22, -.28], g, .016, false);
     }
   }
 
-  for (const [x, title, subtitle] of [[-2.21, '← SELF SERVICE', '셀프 코너'], [2.16, 'CHECKOUT →', '계산대']] as const) {
+  for (const [x, title, subtitle] of [[-1.78, '← SELF SERVICE', '셀프 코너'], [2.05, 'CHECKOUT →', '계산대']] as const) {
     const structure = new THREE.Group();
-    structure.position.set(x, 2.72, 1.08);
+    structure.position.set(x, 2.72, .70);
     scene.add(structure);
     box(1.32, .263, .063, pine, [0, 0, 0], structure, .017, false);
     for (const offset of [-.49, .49]) box(.012, .472, .012, steel, [offset, .369, 0], structure, 0, false);
@@ -449,7 +470,7 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
   }
 
   const notices = [
-    { sku: 'ramen', x: room.left + .054, z: 1.31, rotation: Math.PI / 2, title: 'HOT MEAL', subtitle: '따뜻한 간편식' },
+    { sku: 'ramen', x: room.left + .054, z: 4.45, rotation: Math.PI / 2, title: 'HOT MEAL', subtitle: '따뜻한 간편식' },
     { sku: 'lime', x: room.right - .054, z: -1.52, rotation: -Math.PI / 2, title: 'COLD & FRESH', subtitle: '냉장 음료 코너' },
   ];
   for (const notice of notices) {
@@ -470,7 +491,6 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
   box(.119, .035, .081, black, [.239, 1.021, .086], backDoor, .011, false);
   sign('STAFF ONLY', '직원 전용', .60, .175, [0, 1.55, .051], backDoor, '#e9e9e0', '#303d32');
 
-  const wood = coat('#a18a72', { map: surface('wood'), roughness: .54 });
   const counterTop = coat('#68746c', { map: surface('steel'), roughness: .39, metalness: .21 });
   const till = new THREE.Group();
   till.position.set(counter.x, 0, counter.z);
@@ -525,7 +545,7 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
   clerk.object.position.set(4.87, 0, 4.93);
   scene.add(clerk.object);
 
-  // Service counter, vented microwave doors and an insulated water dispenser.
+  // The three self-serve appliances face the aisle.
   box(.78, .91, 2.17, pine, [-5.89, .46, 3.42], scene, .04);
   box(.91, .075, 2.26, counterTop, [-5.89, .95, 3.42], scene, .025);
   const vent = keep(canvasMap(128, 128, ctx => {
@@ -534,18 +554,47 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
     ctx.fillStyle = '#72817a';
     for (let y = 5; y < 126; y += 7) for (let x = 5; x < 126; x += 7) ctx.fillRect(x, y, 2, 2);
   }));
-  for (const z of [2.79, 3.38]) {
-    box(.51, .35, .49, steel, [-5.90, 1.166, z], scene, .025);
-    box(.041, .227, .345, black, [-5.626, 1.166, z + .037], scene, .017);
-    const mesh = panel(.242, .176, flat({ map: vent }), [-5.603, 1.166, z + .058]);
-    mesh.rotation.y = Math.PI / 2;
-    box(.049, .159, .028, steel, [-5.585, 1.165, z - .096], scene, .012);
-    box(.014, .056, .084, green, [-5.626, 1.255, z - .189], scene, .006);
-  }
+  const microwaveZ = 3.42;
+  box(.51, .35, .49, steel, [-5.90, 1.166, microwaveZ], scene, .025);
+  box(.041, .227, .345, black, [-5.626, 1.166, microwaveZ + .037], scene, .017);
+  const microwaveDoor = panel(.242, .176, flat({ map: vent }), [-5.603, 1.166, microwaveZ + .058]);
+  microwaveDoor.rotation.y = Math.PI / 2;
+  box(.049, .159, .028, steel, [-5.585, 1.165, microwaveZ - .096], scene, .012);
+  box(.014, .056, .084, green, [-5.626, 1.255, microwaveZ - .189], scene, .006);
   box(.49, .48, .46, steel, [-5.90, 1.227, 4.12], scene, .03);
   box(.218, .053, .28, black, [-5.632, 1.021, 4.12], scene, .019);
   box(.091, .093, .071, black, [-5.628, 1.232, 4.12], scene, .022);
   box(.008, .053, .089, lateShelf, [-5.648, 1.382, 4.12], scene, .006);
+  const brewer = new THREE.Group();
+  brewer.position.set(-5.90, .99, 2.76);
+  brewer.rotation.y = Math.PI / 2;
+  scene.add(brewer);
+  box(.47, .59, .46, black, [0, .295, 0], brewer, .035);
+  box(.41, .25, .06, steel, [0, .444, .225], brewer, .014);
+  box(.32, .18, .018, black, [0, .172, .243], brewer, .012);
+  box(.36, .035, .214, steel, [0, .032, .236], brewer, .016);
+  for (const nozzle of [-.045, .045]) box(.04, .057, .079, steel, [nozzle, .274, .261], brewer, .012);
+  const paper = coat('#ddc59a', { roughness: .76 });
+  const cup = put(keep(new THREE.CylinderGeometry(.056, .036, .115, 18)), paper, [0, .108, .267], brewer);
+  cup.visible = false;
+  const lid = keep(new THREE.CylinderGeometry(.055, .041, .046, 16));
+  for (let i = 0; i < 5; i++) put(lid, paper, [.319, .044 + i * .033, .018], brewer);
+  const brewerDisplay = keep(canvasMap(256, 108, () => undefined));
+  panel(.27, .114, flat({ map: brewerDisplay }), [0, .47, .257], brewer);
+  const display = (brewerDisplay.image as HTMLCanvasElement).getContext('2d')!;
+  function setService(method?: Preparation) {
+    const running = method === 'coffee';
+    cup.visible = running;
+    display.fillStyle = '#18251d';
+    display.fillRect(0, 0, 256, 108);
+    display.fillStyle = running ? '#f5d681' : '#d3ebac';
+    display.font = '800 32px system-ui, sans-serif';
+    display.fillText(running ? 'BREWING' : 'READY', 19, 49);
+    display.font = '650 19px system-ui, sans-serif';
+    display.fillText('WASTEOFF COFFEE', 19, 82);
+    brewerDisplay.needsUpdate = true;
+  }
+  setService();
   const station = new THREE.Group();
   station.position.set(service.x, 0, service.z);
   scene.add(station);
@@ -620,12 +669,42 @@ export function buildWorld(scene: THREE.Scene, onTexturesReady: () => void) {
   border.visible = false;
   scene.add(border);
 
+  scene.updateMatrixWorld(true);
+  const batches = new Map<string, typeof staticParts>();
+  for (const part of staticParts) {
+    if (sliding.some(pane => part.parent === pane)) continue;
+    const { x, z } = part.getWorldPosition(new THREE.Vector3());
+    const key = [part.material.id, part.castShadow, Math.floor(x / 7), Math.floor(z / 7)].join('/');
+    const batch = batches.get(key);
+    if (batch) batch.push(part);
+    else batches.set(key, [part]);
+  }
+  for (const parts of batches.values()) {
+    if (parts.length < 3) continue;
+    const geometry = parts.map(part => {
+      const copy = part.geometry.index ? part.geometry.toNonIndexed() : part.geometry.clone();
+      return copy.applyMatrix4(part.matrixWorld);
+    });
+    const merged = mergeGeometries(geometry);
+    geometry.forEach(part => part.dispose());
+    if (!merged) continue;
+    const mesh = put(keep(merged), parts[0].material, [0, 0, 0]);
+    mesh.castShadow = parts[0].castShadow;
+    mesh.receiveShadow = parts[0].receiveShadow;
+    for (const part of parts) {
+      part.removeFromParent();
+      resources.delete(part.geometry);
+      part.geometry.dispose();
+    }
+  }
+
   return {
     player,
     playerShadow,
     heldBasket,
     targets,
     setRegister,
+    setService,
     setBasket,
     highlight(target: Target | null) {
       const mesh = target?.type === 'item'

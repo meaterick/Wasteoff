@@ -13,6 +13,8 @@ export const fixtures: Record<Department, Rectangle & { rotation: number }> = {
   snacks: { x: -2.21, z: -0.19, width: 1.0, depth: 4.35, height: 1.57, rotation: Math.PI / 2 },
   noodles: { x: 2.16, z: -0.19, width: 1.0, depth: 4.35, height: 1.57, rotation: -Math.PI / 2 },
   freezer: { x: 5.85, z: -1.53, width: 1.08, depth: 3.26, height: 1.00, rotation: -Math.PI / 2 },
+  bakery: { x: -5.89, z: .49, width: .87, depth: 2.80, height: 1.69, rotation: Math.PI / 2 },
+  daily: { x: 5.89, z: 1.84, width: .85, depth: 2.47, height: 1.84, rotation: -Math.PI / 2 },
 };
 
 export const counter: Rectangle = { x: 4.55, z: 4.04, width: 3.44, depth: 1.05, height: 1.18 };
@@ -32,6 +34,8 @@ export const destinations: Record<Destination, Pose> = {
   snacks: { x: -0.77, z: -0.14, yaw: -Math.PI / 2 },
   noodles: { x: 0.72, z: -0.11, yaw: Math.PI / 2 },
   freezer: { x: 4.45, z: -1.53, yaw: Math.PI / 2 },
+  bakery: { x: -4.32, z: .49, yaw: -Math.PI / 2 },
+  daily: { x: 4.36, z: 1.84, yaw: Math.PI / 2 },
   register: { x: 4.48, z: 2.58, yaw: Math.PI },
   service: { x: -4.44, z: 3.42, yaw: -Math.PI / 2 },
 };
